@@ -1,0 +1,130 @@
+/// Step 5: live global + per-chapter conversion progress.
+library;
+
+import 'package:flutter/material.dart';
+
+import '../../domain/progress.dart';
+import '../theme.dart';
+import 'section_card.dart';
+
+/// Renders the character-weighted global progress bar plus one row per chapter
+/// with its own mini bar and status icon.
+class ProgressView extends StatelessWidget {
+  final ConversionProgress progress;
+  const ProgressView({super.key, required this.progress});
+
+  @override
+  Widget build(BuildContext context) {
+    final text = Theme.of(context).textTheme;
+    final pct = (progress.globalFraction * 100).round();
+    return SectionCard(
+      step: 5,
+      title: 'Conversion progress',
+      subtitle: progress.message,
+      trailing: _phasePill(progress.phase),
+      child: Column(
+        crossAxisAlignment: CrossAxisAlignment.start,
+        children: [
+          Row(
+            children: [
+              Expanded(child: _Bar(value: progress.globalFraction, height: 12)),
+              const SizedBox(width: 12),
+              Text('$pct%',
+                  style: text.titleMedium?.copyWith(color: AppTokens.amberBright)),
+            ],
+          ),
+          const SizedBox(height: 18),
+          Container(
+            decoration: BoxDecoration(
+              color: AppTokens.ink,
+              borderRadius: BorderRadius.circular(12),
+              border: Border.all(color: AppTokens.line),
+            ),
+            constraints: const BoxConstraints(maxHeight: 260),
+            child: ListView.builder(
+              shrinkWrap: true,
+              itemCount: progress.chapters.length,
+              itemBuilder: (context, i) => _ChapterRow(progress.chapters[i]),
+            ),
+          ),
+        ],
+      ),
+    );
+  }
+
+  Widget _phasePill(ConvPhase phase) => switch (phase) {
+        ConvPhase.done =>
+          const StatusPill('Done', icon: Icons.celebration_rounded),
+        ConvPhase.error =>
+          const StatusPill('Error', color: AppTokens.rust, icon: Icons.error_outline),
+        ConvPhase.assembling =>
+          const StatusPill('Assembling', color: AppTokens.amber, icon: Icons.library_music_outlined),
+        ConvPhase.synthesizing =>
+          const StatusPill('Narrating', color: AppTokens.amber, icon: Icons.graphic_eq_rounded),
+        _ => const StatusPill('Idle', color: AppTokens.muted),
+      };
+}
+
+class _ChapterRow extends StatelessWidget {
+  final ChapterProgress ch;
+  const _ChapterRow(this.ch);
+
+  @override
+  Widget build(BuildContext context) {
+    return Padding(
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 9),
+      child: Row(
+        children: [
+          _statusIcon(ch.status),
+          const SizedBox(width: 10),
+          SizedBox(
+            width: 200,
+            child: Text(ch.title,
+                maxLines: 1,
+                overflow: TextOverflow.ellipsis,
+                style: Theme.of(context).textTheme.bodyMedium),
+          ),
+          const SizedBox(width: 12),
+          Expanded(child: _Bar(value: ch.fraction, height: 6)),
+        ],
+      ),
+    );
+  }
+
+  Widget _statusIcon(ChapterStatus s) => switch (s) {
+        ChapterStatus.done =>
+          const Icon(Icons.check_circle_rounded, size: 16, color: AppTokens.sage),
+        ChapterStatus.error =>
+          const Icon(Icons.error_rounded, size: 16, color: AppTokens.rust),
+        ChapterStatus.synthesizing => const SizedBox(
+            width: 16,
+            height: 16,
+            child: CircularProgressIndicator(strokeWidth: 2, color: AppTokens.amber)),
+        ChapterStatus.assembling =>
+          const Icon(Icons.merge_rounded, size: 16, color: AppTokens.amber),
+        ChapterStatus.skipped =>
+          const Icon(Icons.remove_circle_outline, size: 16, color: AppTokens.muted),
+        ChapterStatus.pending =>
+          const Icon(Icons.circle_outlined, size: 16, color: AppTokens.muted),
+      };
+}
+
+/// A rounded amber progress bar with a soft track.
+class _Bar extends StatelessWidget {
+  final double value;
+  final double height;
+  const _Bar({required this.value, required this.height});
+
+  @override
+  Widget build(BuildContext context) {
+    return ClipRRect(
+      borderRadius: BorderRadius.circular(999),
+      child: LinearProgressIndicator(
+        value: value,
+        minHeight: height,
+        backgroundColor: AppTokens.surfaceHigh,
+        valueColor: const AlwaysStoppedAnimation(AppTokens.amber),
+      ),
+    );
+  }
+}

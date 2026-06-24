@@ -54,6 +54,30 @@ void main() {
     });
   });
 
+  group('dependency classification', () {
+    test('ffmpeg/ffprobe are required; engine tools are optional', () {
+      expect(DependencyKind.ffmpeg.isRequired, isTrue);
+      expect(DependencyKind.ffprobe.isRequired, isTrue);
+      expect(DependencyKind.piper.isRequired, isFalse);
+      expect(DependencyKind.espeakNg.isRequired, isFalse);
+      expect(DependencyKind.kokoroModel.isRequired, isFalse);
+    });
+    test('neededFor labels the owning engine', () {
+      expect(DependencyKind.piper.neededFor, 'Piper');
+      expect(DependencyKind.espeakNg.neededFor, 'Kokoro');
+      expect(DependencyKind.ffmpeg.neededFor, 'all engines');
+    });
+  });
+
+  group('DependencyChecker.checkAll', () {
+    test('probes every known dependency, not just one backend', () async {
+      final checker = DependencyChecker(ScriptedRunner({}));
+      final statuses = await checker.checkAll(os: HostOs.macos);
+      expect(statuses.map((s) => s.kind).toSet(),
+          DependencyKind.values.toSet());
+    });
+  });
+
   group('DependencyChecker.check', () {
     test('reports missing when which exits non-zero', () async {
       final checker = DependencyChecker(ScriptedRunner({

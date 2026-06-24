@@ -10,6 +10,18 @@ import '../../logic/app_controller.dart';
 import '../theme.dart';
 import 'section_card.dart';
 
+/// Narration rate measured from a real French audiobook run (≈416k chars →
+/// 6.3 h ⇒ ~18 characters/second). Used only for a rough time estimate.
+const double _charsPerSecond = 18.3;
+
+/// Formats a character count as a friendly estimated narration time.
+String estimateLabel(int chars) {
+  final seconds = chars / _charsPerSecond;
+  if (seconds < 60) return '~1 min';
+  if (seconds < 3600) return '~${(seconds / 60).round()} min';
+  return '~${(seconds / 3600).toStringAsFixed(1)} h';
+}
+
 /// Lets the user pick an `.epub`, then shows the parsed cover, metadata, and a
 /// per-chapter include/exclude checklist.
 class FilePickerCard extends StatelessWidget {
@@ -65,7 +77,9 @@ class FilePickerCard extends StatelessWidget {
           if (book != null) ...[
             const SizedBox(height: 18),
             _Metadata(controller: controller),
-            const SizedBox(height: 18),
+            const SizedBox(height: 16),
+            _SelectionSummary(controller: controller),
+            const SizedBox(height: 12),
             _ChapterList(controller: controller),
           ],
         ],
@@ -117,12 +131,55 @@ class _Metadata extends StatelessWidget {
                       color: AppTokens.muted, icon: Icons.list_rounded),
                   StatusPill('${(book.totalChars / 1000).round()}k chars',
                       color: AppTokens.muted, icon: Icons.notes_rounded),
+                  StatusPill(estimateLabel(book.totalChars),
+                      color: AppTokens.amber, icon: Icons.schedule_rounded),
                 ],
               ),
             ],
           ),
         ),
       ],
+    );
+  }
+}
+
+/// A highlighted line summarizing what will actually be converted, updating live
+/// as chapters are ticked/unticked.
+class _SelectionSummary extends StatelessWidget {
+  final AppController controller;
+  const _SelectionSummary({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final book = controller.book!;
+    final selected = controller.options!.selectedChapterIndices;
+    final chosen = book.chapters.where((c) => selected.contains(c.index));
+    final count = chosen.length;
+    final chars = chosen.fold<int>(0, (sum, c) => sum + c.charCount);
+    return Container(
+      width: double.infinity,
+      padding: const EdgeInsets.symmetric(horizontal: 14, vertical: 12),
+      decoration: BoxDecoration(
+        color: AppTokens.amber.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTokens.amber.withValues(alpha: 0.30)),
+      ),
+      child: Row(
+        children: [
+          const Icon(Icons.playlist_add_check_rounded,
+              size: 18, color: AppTokens.amberBright),
+          const SizedBox(width: 10),
+          Expanded(
+            child: Text(
+              count == 0
+                  ? 'No chapters selected'
+                  : 'Converting $count of ${book.chapters.length} chapters  ·  '
+                      '${(chars / 1000).round()}k chars  ·  ${estimateLabel(chars)} of audio',
+              style: Theme.of(context).textTheme.bodyMedium,
+            ),
+          ),
+        ],
+      ),
     );
   }
 }

@@ -58,9 +58,14 @@ class ConvertBar extends StatelessWidget {
     if (c.options?.selectedChapterIndices.isEmpty ?? true) {
       return 'Select at least one chapter.';
     }
-    if (c.options?.backend.isCloud ?? false) {
-      return 'Enter your API key to enable conversion.';
+    final o = c.options!;
+    if (o.backend.isCloud && (o.apiKeys[o.backend.name] ?? '').trim().isEmpty) {
+      return 'Enter your ${o.backend.label} API key to enable conversion.';
     }
-    return 'Install the missing dependencies above to continue.';
+    if (!c.selectedBackendReady) {
+      return '${o.backend.label} isn\'t installed yet — install it in the '
+          'toolkit step, or pick another engine.';
+    }
+    return 'Almost there.';
   }
 }

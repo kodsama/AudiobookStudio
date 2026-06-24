@@ -39,6 +39,22 @@ extension DependencyKindInfo on DependencyKind {
         DependencyKind.kokoroModel => 'Kokoro model',
       };
 
+  /// Whether this dependency is needed by *every* engine (and therefore blocks
+  /// conversion entirely if missing). ffmpeg/ffprobe are required; engine-
+  /// specific tools (piper, espeak-ng, voices, models) are optional — you can
+  /// skip them by choosing a different engine.
+  bool get isRequired => switch (this) {
+        DependencyKind.ffmpeg || DependencyKind.ffprobe => true,
+        _ => false,
+      };
+
+  /// Which engine(s) this dependency serves, for the UI label.
+  String get neededFor => switch (this) {
+        DependencyKind.ffmpeg || DependencyKind.ffprobe => 'all engines',
+        DependencyKind.piper || DependencyKind.piperVoice => 'Piper',
+        DependencyKind.espeakNg || DependencyKind.kokoroModel => 'Kokoro',
+      };
+
   /// True when this is installed by the OS package manager. `piper` is a
   /// GitHub-release binary (not a package-manager formula on any platform), so
   /// it is fetched by the in-app downloader alongside voices/models.

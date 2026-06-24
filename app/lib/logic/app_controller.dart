@@ -167,20 +167,46 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Re-runs the dependency probe for the current backend. Works before a book
-  /// is loaded too, using the default (Piper) backend, so the toolkit can be
-  /// verified as the very first step.
+  /// Probes every known dependency (across all engines) so the toolkit shows
+  /// the full picture. Runs on launch and whenever the backend changes.
   Future<void> checkDeps() async {
-    final backend = _options?.backend ?? TtsBackendKind.piper;
-    _deps = await checker.check(backend, os: os);
+    _deps = await checker.checkAll(os: os);
     _depsChecked = true;
     notifyListeners();
   }
 
-  /// Whether the toolkit is ready: a check has run and every required system
-  /// package (ffmpeg/ffprobe, plus espeak-ng for Kokoro) is installed. Gates
-  /// the rest of the flow so nothing is proposed before the environment is set.
-  bool get environmentReady => _depsChecked && _depsAllFound;
+  /// Status for a specific dependency kind, if probed.
+  DependencyStatus? statusOf(DependencyKind kind) {
+    for (final d in _deps) {
+      if (d.kind == kind) return d;
+    }
+    return null;
+  }
+
+  /// Required dependencies (ffmpeg/ffprobe) that are still missing.
+  List<DependencyStatus> get missingRequired =>
+      _deps.where((d) => d.kind.isRequired && !d.found).toList();
+
+  /// Whether the toolkit is ready to proceed: every *required* dependency
+  /// (ffmpeg/ffprobe) is present. Engine-specific tools are optional and don't
+  /// block choosing a book — they only gate that specific engine.
+  bool get environmentReady => _depsChecked && missingRequired.isEmpty;
+
+  /// Whether the *currently selected* engine can actually run: its probeable
+  /// binaries are all present (and, for cloud engines, an API key is set).
+  bool get selectedBackendReady {
+    final o = _options;
+    if (o == null) return false;
+    final binsOk = checker
+        .requiredFor(o.backend)
+        .where((k) => k.binaryName != null)
+        .every((k) => statusOf(k)?.found ?? false);
+    if (o.backend.isCloud) {
+      final key = o.apiKeys[o.backend.name] ?? '';
+      return binsOk && key.trim().isNotEmpty;
+    }
+    return binsOk;
+  }
 
   /// Installs missing system packages, streaming log lines, then re-checks.
   Future<void> installMissing() async {
@@ -207,15 +233,8 @@ class AppController extends ChangeNotifier {
     if (o == null || _book == null || isConverting) return false;
     if (o.outputPath.trim().isEmpty) return false;
     if (o.selectedChapterIndices.isEmpty) return false;
-    if (o.backend.isCloud) {
-      final key = o.apiKeys[o.backend.name] ?? '';
-      return key.trim().isNotEmpty && _depsAllFound;
-    }
-    return _depsChecked && _depsAllFound;
+    return _depsChecked && selectedBackendReady;
   }
-
-  bool get _depsAllFound =>
-      _deps.where((d) => d.kind.isSystemPackage).every((d) => d.found);
 
   /// Starts the conversion using the selected backend.
   Future<void> startConversion() async {

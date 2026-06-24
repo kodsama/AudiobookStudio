@@ -41,6 +41,16 @@ class DependencyChecker {
     return result;
   }
 
+  /// Probes *all* known dependencies (across every engine) so the toolkit view
+  /// can show the full picture and mark engine-specific ones as optional.
+  Future<List<DependencyStatus>> checkAll({required HostOs os}) async {
+    final result = <DependencyStatus>[];
+    for (final kind in DependencyKind.values) {
+      result.add(await _probe(kind, os));
+    }
+    return result;
+  }
+
   /// Probes a single dependency. Binary deps are located on `PATH`; download
   /// deps (voices/models) are reported missing here and handled by the
   /// downloader UI.

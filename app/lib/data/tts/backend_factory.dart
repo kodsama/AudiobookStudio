@@ -2,44 +2,34 @@
 library;
 
 import 'package:http/http.dart' as http;
-import 'package:path/path.dart' as p;
 
 import '../../domain/conversion_options.dart';
-import '../deps/kokoro_installer.dart';
-import '../deps/piper_installer.dart';
+import '../deps/sherpa_model_installer.dart';
 import '../process_runner.dart';
 import 'elevenlabs_backend.dart';
-import 'kokoro_backend.dart';
-import 'kokoro_ort_session.dart';
 import 'openai_backend.dart';
-import 'piper_backend.dart';
+import 'sherpa_catalog.dart';
+import 'sherpa_tts_backend.dart';
 import 'tts_backend.dart';
 
 /// Resolves [options.backend] into a ready-to-use [TtsBackend].
 ///
-/// [modelsDir] is where local models/voices live; cloud backends ignore it and
-/// read their key from [options.apiKeys] (`openai` / `elevenlabs`).
-///
-/// Kokoro is constructed lazily by its own module (see `kokoro_backend.dart`)
-/// once its native runtime is available; until then selecting it throws a clear
-/// [UnimplementedError].
+/// For the `local` engine, `options.voiceId` is the sherpa model id; the model
+/// is run via [SherpaTtsBackend] using files from [sherpa]. Cloud engines read
+/// their key from `options.apiKeys`.
 TtsBackend makeBackend(
   ConversionOptions options, {
   required ProcessRunner runner,
   required http.Client httpClient,
-  required String modelsDir,
-  PiperInstaller? piper,
-  KokoroInstaller? kokoro,
+  required SherpaModelInstaller sherpa,
 }) {
   switch (options.backend) {
-    case TtsBackendKind.piper:
-      // Use the downloaded binary + voice when an installer is provided.
-      final modelPath = piper?.voicePath(options.voiceId) ??
-          p.join(modelsDir, 'piper', '${options.voiceId}.onnx');
-      return PiperBackend(
-        runner: runner,
-        modelPath: modelPath,
-        piperBin: piper?.binaryPath ?? 'piper',
+    case TtsBackendKind.local:
+      final model = sherpaModelById(options.voiceId) ??
+          (throw StateError('Unknown local model: ${options.voiceId}'));
+      return SherpaTtsBackend(
+        model: model,
+        installer: sherpa,
         speed: options.speed,
       );
     case TtsBackendKind.openai:
@@ -54,17 +44,6 @@ TtsBackend makeBackend(
         client: httpClient,
         apiKey: options.apiKeys['elevenlabs'] ?? '',
         voiceId: options.voiceId,
-      );
-    case TtsBackendKind.kokoro:
-      final k = kokoro ??
-          (throw StateError('Kokoro installer not provided to makeBackend'));
-      return KokoroBackend(
-        runner: runner,
-        session: KokoroOrtSession(
-            modelPath: k.modelPath, voicesPath: k.voicesPath),
-        languageCode: options.languageCode,
-        voiceId: options.voiceId,
-        speed: options.speed,
       );
   }
 }

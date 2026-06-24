@@ -5,8 +5,7 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:audiobook_studio/data/audio/ffmpeg_service.dart';
 import 'package:audiobook_studio/data/deps/dependency_checker.dart';
-import 'package:audiobook_studio/data/deps/kokoro_installer.dart';
-import 'package:audiobook_studio/data/deps/piper_installer.dart';
+import 'package:audiobook_studio/data/deps/sherpa_model_installer.dart';
 import 'package:audiobook_studio/data/epub/epub_parser.dart';
 import 'package:audiobook_studio/data/process_runner.dart';
 import 'package:audiobook_studio/domain/conversion_options.dart';
@@ -68,20 +67,17 @@ AppController makeController({bool depsFound = true}) {
   final log = LogController();
   final client = MockClient((_) async => http.Response('', 200));
   final mdir = Directory.systemTemp.createTempSync('wtest_').path;
-  final piper = PiperInstaller(modelsDir: mdir, client: client);
-  final kokoro = KokoroInstaller(modelsDir: mdir, client: client);
+  final sherpa = SherpaModelInstaller(modelsDir: mdir, client: client);
   return AppController(
     parser: EpubParser(),
     ffmpeg: FfmpegService(runner),
     runner: runner,
     httpClient: client,
-    checker: DependencyChecker(runner, piper: piper, kokoro: kokoro),
-    piperInstaller: piper,
-    kokoroInstaller: kokoro,
+    checker: DependencyChecker(runner),
+    sherpaInstaller: sherpa,
     log: log,
     conversion: ConversionController(log: log),
     os: HostOs.macos,
-    modelsDir: piper.modelsDir,
   );
 }
 
@@ -103,7 +99,9 @@ void main() {
       (tester) async {
     final c = makeController(depsFound: true);
     await c.loadBook(fixtureEpub(), '/books/test.epub');
-    // Default engine is cloud (no local Piper downloaded); provide its key.
+    // Default engine is local (model not downloaded in tests); switch to a
+    // cloud engine and provide its key so a conversion is runnable.
+    await c.setBackend(TtsBackendKind.openai);
     c.updateOptions((o) => o.copyWith(apiKeys: {o.backend.name: 'sk-test'}));
     await tester.pumpWidget(wrap(ConvertBar(controller: c)));
     await tester.pump();
@@ -134,8 +132,8 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    // Force a local engine → no API key field.
-    c.updateOptions((o) => o.copyWith(backend: TtsBackendKind.piper));
+    // Local engine → no API key field.
+    c.updateOptions((o) => o.copyWith(backend: TtsBackendKind.local));
     await tester.pumpAndSettle();
     expect(find.textContaining('API key'), findsNothing);
 

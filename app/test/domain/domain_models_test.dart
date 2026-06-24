@@ -28,10 +28,10 @@ void main() {
   });
 
   group('ConversionOptions.defaults', () {
-    test('selects Piper, book language, natural speed, all chapters', () {
+    test('selects local engine, book language, natural speed, all chapters', () {
       final o = ConversionOptions.defaults(_book(),
           outputPath: '/out/book.m4b', workDir: '/tmp/work');
-      expect(o.backend, TtsBackendKind.piper);
+      expect(o.backend, TtsBackendKind.local);
       expect(o.languageCode, 'fr');
       expect(o.speed, 1.0);
       expect(o.bitrate, '128k');
@@ -53,8 +53,7 @@ void main() {
     test('classifies cloud vs local backends', () {
       expect(TtsBackendKind.openai.isCloud, isTrue);
       expect(TtsBackendKind.elevenlabs.isCloud, isTrue);
-      expect(TtsBackendKind.piper.isCloud, isFalse);
-      expect(TtsBackendKind.kokoro.isCloud, isFalse);
+      expect(TtsBackendKind.local.isCloud, isFalse);
     });
   });
 

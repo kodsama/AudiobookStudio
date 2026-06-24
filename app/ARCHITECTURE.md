@@ -73,7 +73,24 @@ Add `Voice` entries with the new `languageCode` for each backend that supports
 it, plus a label in `VoiceCatalog.languageLabels`. The language dropdown derives
 its options from the catalog.
 
-## §Kokoro — local ONNX engine (implemented & verified on macOS)
+## Local TTS — unified via sherpa-onnx (implemented & verified on macOS)
+
+All local models run through one engine, `SherpaTtsBackend`, powered by the
+`sherpa_onnx` package (bundles onnxruntime + phonemizer, no Python):
+
+- `sherpa_catalog.dart` — the model catalog (VITS/Piper, MMS, Kokoro, Matcha,
+  Kitten), each entry describing its download URL, family, languages, sample
+  rate and file layout. Add a model = one entry.
+- `SherpaModelInstaller` — downloads + extracts the `.tar.bz2` archive (and any
+  Matcha vocoder) into the app models dir, on demand, with a one-click button.
+- `SherpaTtsBackend` — builds the family-specific `OfflineTtsModelConfig` and
+  calls `OfflineTts.generate`, wrapping the samples to a WAV.
+
+macOS notes: deployment target ≥ 15 and `use_frameworks! :linkage => :static`
+(both configured). Verified by `integration_test/sherpa_tts_test.dart` running
+real VITS French synthesis on macOS.
+
+## (Superseded) earlier per-engine Kokoro/Piper integration
 
 `KokoroBackend` runs the Kokoro v1.0 model fully in Dart (no Python):
 

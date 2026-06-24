@@ -24,13 +24,17 @@ binaries (`ffmpeg`, `piper`, `espeak-ng`) and cloud TTS over HTTP.
 - 🔎 **Dependency check + one-click install** — the app detects what's missing
   for the selected engine and installs system packages via your platform's
   package manager (Homebrew / apt / winget), streaming the log live.
-- 🗣️ **Four TTS engines behind one interface**, selectable in the UI:
+- 🗣️ **Three engines**, selectable in the UI:
   | Engine | Cost | Locale | Notes |
   |---|---|---|---|
-  | **Piper** (default) | free, local | offline | standalone binary + `.onnx` voice |
+  | **Local** (default) | free | offline | sherpa-onnx running any of many models — see below |
   | **OpenAI** | paid | cloud | `gpt-4o-mini-tts`, very natural |
   | **ElevenLabs** | paid | cloud | `eleven_multilingual_v2`, top fidelity |
-  | **Kokoro** | free, local | offline | ONNX model, auto-downloaded; verified on macOS |
+- 🧠 **Many state-of-the-art local models** (one unified engine via sherpa-onnx),
+  auto-downloaded on demand: **Piper/VITS** (incl. French Siwis), **MMS**
+  (1000+ languages), **Kokoro** (multilingual), **Matcha**, **Kitten**. Verified
+  producing French audio on macOS. No Python — sherpa-onnx bundles its own
+  runtime and phonemizer.
 - 🌍 **Multi-language** — French and English out of the box; extend by adding a
   voice to `lib/data/tts/voice_catalog.dart`.
 - 🎚️ **All options in the UI with smart defaults** — engine, language, voice,

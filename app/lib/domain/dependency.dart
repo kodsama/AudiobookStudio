@@ -5,79 +5,39 @@ library;
 /// `dart:io.Platform` so tests can drive each branch deterministically.
 enum HostOs { macos, linux, windows }
 
-/// An external tool/model the app relies on for a given backend.
+/// The system tools the app relies on. Local TTS models are downloaded in-app
+/// (sherpa-onnx bundles its own runtime + espeak data), so the only system
+/// packages are ffmpeg/ffprobe for assembly.
 enum DependencyKind {
-  /// Audio encoder / muxer (all backends).
+  /// Audio encoder / muxer.
   ffmpeg,
 
-  /// Media probe used for chapter durations (all backends).
+  /// Media probe used for chapter durations.
   ffprobe,
-
-  /// Piper TTS binary.
-  piper,
-
-  /// A Piper `.onnx` voice for the selected language.
-  piperVoice,
-
-  /// Phonemizer used by Kokoro.
-  espeakNg,
-
-  /// Kokoro ONNX model + voice pack.
-  kokoroModel,
 }
 
-/// Whether a [DependencyKind] is a system package (installable via the OS
-/// package manager) or a downloadable asset (model/voice fetched in-app).
+/// Metadata about a [DependencyKind].
 extension DependencyKindInfo on DependencyKind {
   /// Short human label.
   String get label => switch (this) {
         DependencyKind.ffmpeg => 'ffmpeg',
         DependencyKind.ffprobe => 'ffprobe',
-        DependencyKind.piper => 'piper',
-        DependencyKind.piperVoice => 'Piper voice',
-        DependencyKind.espeakNg => 'espeak-ng',
-        DependencyKind.kokoroModel => 'Kokoro model',
       };
 
-  /// Whether this dependency is needed by *every* engine (and therefore blocks
-  /// conversion entirely if missing). ffmpeg/ffprobe are required; engine-
-  /// specific tools (piper, espeak-ng, voices, models) are optional — you can
-  /// skip them by choosing a different engine.
-  bool get isRequired => switch (this) {
-        DependencyKind.ffmpeg || DependencyKind.ffprobe => true,
-        _ => false,
+  /// All current dependencies are required system packages.
+  bool get isRequired => true;
+
+  /// Installed by the OS package manager.
+  bool get isSystemPackage => true;
+
+  /// The executable name probed on `PATH`.
+  String get binaryName => switch (this) {
+        DependencyKind.ffmpeg => 'ffmpeg',
+        DependencyKind.ffprobe => 'ffprobe',
       };
 
   /// Which engine(s) this dependency serves, for the UI label.
-  String get neededFor => switch (this) {
-        DependencyKind.ffmpeg || DependencyKind.ffprobe => 'all engines',
-        DependencyKind.piper || DependencyKind.piperVoice => 'Piper',
-        DependencyKind.espeakNg || DependencyKind.kokoroModel => 'Kokoro',
-      };
-
-  /// True when this is installed by the OS package manager. `piper` is a
-  /// GitHub-release binary (not a package-manager formula on any platform), so
-  /// it is fetched by the in-app downloader alongside voices/models.
-  bool get isSystemPackage => switch (this) {
-        DependencyKind.ffmpeg ||
-        DependencyKind.ffprobe ||
-        DependencyKind.espeakNg =>
-          true,
-        DependencyKind.piper ||
-        DependencyKind.piperVoice ||
-        DependencyKind.kokoroModel =>
-          false,
-      };
-
-  /// The executable name probed on `PATH` when this dependency is a binary,
-  /// or `null` for pure downloads (voices/models).
-  String? get binaryName => switch (this) {
-        DependencyKind.ffmpeg => 'ffmpeg',
-        DependencyKind.ffprobe => 'ffprobe',
-        DependencyKind.piper => 'piper',
-        DependencyKind.espeakNg => 'espeak-ng',
-        DependencyKind.piperVoice || DependencyKind.kokoroModel => null,
-      };
+  String get neededFor => 'all engines';
 }
 
 /// The resolved state of one dependency on this machine.

@@ -5,6 +5,7 @@ import 'package:file_picker/file_picker.dart';
 import 'package:flutter/material.dart';
 import 'package:path/path.dart' as p;
 
+import '../../data/tts/sherpa_catalog.dart';
 import '../../data/tts/voice_catalog.dart';
 import '../../domain/conversion_options.dart';
 import '../../logic/app_controller.dart';
@@ -38,13 +39,9 @@ class OptionsPanel extends StatelessWidget {
                   _voiceField(o),
                   _bitrateField(o),
                 ]),
-                if (controller.needsPiperSetup) ...[
+                if (controller.needsModelDownload) ...[
                   const SizedBox(height: 16),
-                  _PiperSetup(controller: controller),
-                ],
-                if (controller.needsKokoroSetup) ...[
-                  const SizedBox(height: 16),
-                  _KokoroSetup(controller: controller),
+                  _ModelSetup(controller: controller),
                 ],
                 const SizedBox(height: 18),
                 _speedSlider(context, o),
@@ -66,38 +63,13 @@ class OptionsPanel extends StatelessWidget {
         DropdownButtonFormField<TtsBackendKind>(
           isExpanded: true,
           initialValue: o.backend,
-          selectedItemBuilder: (context) => [
-            for (final k in TtsBackendKind.values) Text(k.label),
-          ],
           items: [
             for (final k in TtsBackendKind.values)
-              DropdownMenuItem(
-                value: k,
-                enabled: controller.backendAvailable(k),
-                child: _engineItem(k),
-              ),
+              DropdownMenuItem(value: k, child: Text(k.label)),
           ],
-          onChanged: (k) =>
-              (k == null || !controller.backendAvailable(k))
-                  ? null
-                  : controller.setBackend(k),
+          onChanged: (k) => k == null ? null : controller.setBackend(k),
         ),
       );
-
-  /// Dropdown row for an engine: greyed with a reason when not selectable.
-  Widget _engineItem(TtsBackendKind k) {
-    final available = controller.backendAvailable(k);
-    if (available) return Text(k.label);
-    return Row(
-      children: [
-        Expanded(
-          child: Text(k.label, style: const TextStyle(color: AppTokens.muted)),
-        ),
-        Text('· ${controller.unavailableReason(k)}',
-            style: const TextStyle(color: AppTokens.muted, fontSize: 12)),
-      ],
-    );
-  }
 
   Widget _languageField(ConversionOptions o) {
     final langs = VoiceCatalog.languages(o.backend);
@@ -118,16 +90,26 @@ class OptionsPanel extends StatelessWidget {
   }
 
   Widget _voiceField(ConversionOptions o) {
-    final voices = VoiceCatalog.voices(o.backend, o.languageCode);
+    // Local engine → sherpa model catalog for the language; cloud → cloud voices.
+    final items = o.backend == TtsBackendKind.local
+        ? [
+            for (final m in sherpaModelsFor(o.languageCode))
+              (id: m.id, label: m.label)
+          ]
+        : [
+            for (final v in VoiceCatalog.voices(o.backend, o.languageCode))
+              (id: v.id, label: v.label)
+          ];
+    final hasSelected = items.any((i) => i.id == o.voiceId);
     return _Labeled(
-      'Voice',
+      o.backend == TtsBackendKind.local ? 'Model / voice' : 'Voice',
       DropdownButtonFormField<String>(
         isExpanded: true,
         initialValue:
-            voices.any((v) => v.id == o.voiceId) ? o.voiceId : (voices.isEmpty ? null : voices.first.id),
+            hasSelected ? o.voiceId : (items.isEmpty ? null : items.first.id),
         items: [
-          for (final v in voices)
-            DropdownMenuItem(value: v.id, child: Text(v.label)),
+          for (final i in items)
+            DropdownMenuItem(value: i.id, child: Text(i.label)),
         ],
         onChanged: (id) => id == null
             ? null
@@ -168,40 +150,16 @@ class OptionsPanel extends StatelessWidget {
 
 }
 
-/// One-click Piper setup: downloads the binary + selected voice on demand.
-class _PiperSetup extends StatelessWidget {
+/// One-click setup: downloads the selected local model on demand.
+class _ModelSetup extends StatelessWidget {
   final AppController controller;
-  const _PiperSetup({required this.controller});
+  const _ModelSetup({required this.controller});
 
   @override
   Widget build(BuildContext context) {
-    final installing = controller.installingPiper;
-    // Upstream Piper has no working standalone macOS binary; be honest instead
-    // of offering a button that yields a broken engine.
-    if (!controller.piperAutoInstallSupported) {
-      return Container(
-        padding: const EdgeInsets.all(14),
-        decoration: BoxDecoration(
-          color: AppTokens.rust.withValues(alpha: 0.10),
-          borderRadius: BorderRadius.circular(12),
-          border: Border.all(color: AppTokens.rust.withValues(alpha: 0.30)),
-        ),
-        child: Row(
-          children: [
-            const Icon(Icons.info_outline_rounded,
-                size: 18, color: AppTokens.rust),
-            const SizedBox(width: 10),
-            Expanded(
-              child: Text(
-                "Piper has no working macOS build upstream yet. Use a cloud "
-                "engine (OpenAI / ElevenLabs) for now, or install piper manually.",
-                style: Theme.of(context).textTheme.bodySmall,
-              ),
-            ),
-          ],
-        ),
-      );
-    }
+    final installing = controller.installingModel;
+    final model = controller.selectedModel;
+    final mb = model?.sizeMb ?? 0;
     return Container(
       padding: const EdgeInsets.all(14),
       decoration: BoxDecoration(
@@ -212,7 +170,7 @@ class _PiperSetup extends StatelessWidget {
       child: Row(
         children: [
           FilledButton.icon(
-            onPressed: installing ? null : controller.setupPiper,
+            onPressed: installing ? null : controller.setupModel,
             icon: installing
                 ? const SizedBox(
                     width: 16,
@@ -220,57 +178,16 @@ class _PiperSetup extends StatelessWidget {
                     child: CircularProgressIndicator(
                         strokeWidth: 2, color: AppTokens.ink))
                 : const Icon(Icons.download_rounded, size: 18),
-            label: Text(installing ? 'Downloading…' : 'Download Piper + voice'),
+            label: Text(installing
+                ? 'Downloading…'
+                : 'Download ${model?.label ?? 'model'}'),
           ),
           const SizedBox(width: 12),
           Expanded(
             child: Text(
               installing
-                  ? 'Fetching the engine and voice (~80 MB). Watch the log below.'
-                  : 'Piper is free and offline. One-time ~80 MB download to enable it.',
-              style: Theme.of(context).textTheme.bodySmall,
-            ),
-          ),
-        ],
-      ),
-    );
-  }
-}
-
-/// One-click Kokoro setup: downloads the ONNX model + voices on demand.
-class _KokoroSetup extends StatelessWidget {
-  final AppController controller;
-  const _KokoroSetup({required this.controller});
-
-  @override
-  Widget build(BuildContext context) {
-    final installing = controller.installingKokoro;
-    return Container(
-      padding: const EdgeInsets.all(14),
-      decoration: BoxDecoration(
-        color: AppTokens.amber.withValues(alpha: 0.10),
-        borderRadius: BorderRadius.circular(12),
-        border: Border.all(color: AppTokens.amber.withValues(alpha: 0.30)),
-      ),
-      child: Row(
-        children: [
-          FilledButton.icon(
-            onPressed: installing ? null : controller.setupKokoro,
-            icon: installing
-                ? const SizedBox(
-                    width: 16,
-                    height: 16,
-                    child: CircularProgressIndicator(
-                        strokeWidth: 2, color: AppTokens.ink))
-                : const Icon(Icons.download_rounded, size: 18),
-            label: Text(installing ? 'Downloading…' : 'Download Kokoro model'),
-          ),
-          const SizedBox(width: 12),
-          Expanded(
-            child: Text(
-              installing
-                  ? 'Fetching the model + voices (~115 MB). Watch the log below.'
-                  : 'Kokoro is free, offline, high quality. One-time ~115 MB download.',
+                  ? 'Fetching the model (~$mb MB). Watch the log below.'
+                  : 'Free, offline, runs on your machine. One-time ~$mb MB download.',
               style: Theme.of(context).textTheme.bodySmall,
             ),
           ),

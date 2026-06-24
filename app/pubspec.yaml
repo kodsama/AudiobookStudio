@@ -44,7 +44,7 @@ dependencies:
   http: ^1.6.0
   crypto: ^3.0.7
   google_fonts: ^8.1.0
-  flutter_onnxruntime: ^1.8.0
+  sherpa_onnx: ^1.13.3
 
 dev_dependencies:
   flutter_test:

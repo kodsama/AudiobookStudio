@@ -13,8 +13,7 @@ abstract class DependencyInstaller {
   DependencyInstaller(this.runner);
 
   /// The package-manager package name for a system dependency.
-  static String packageName(DependencyKind kind) =>
-      kind == DependencyKind.espeakNg ? 'espeak-ng' : 'ffmpeg';
+  static String packageName(DependencyKind kind) => 'ffmpeg';
 
   /// Builds the install command (executable + args) for the given system
   /// [packages]. Exposed for testing the command without executing it.
@@ -73,8 +72,7 @@ class WindowsInstaller extends DependencyInstaller {
   WindowsInstaller(super.runner);
 
   /// Maps a generic package name to its winget id.
-  static String wingetId(String pkg) =>
-      pkg == 'espeak-ng' ? 'eSpeak-NG.eSpeak-NG' : 'Gyan.FFmpeg';
+  static String wingetId(String pkg) => 'Gyan.FFmpeg';
 
   @override
   (String, List<String>) installCommand(List<String> packages) => (

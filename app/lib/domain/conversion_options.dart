@@ -3,13 +3,14 @@ library;
 
 import 'book.dart';
 
-/// The available text-to-speech engines, all behind one common interface.
+/// The available text-to-speech engines.
+///
+/// All local models (Piper/VITS, MMS, Kokoro, Matcha, Kitten) run through one
+/// `local` engine powered by sherpa-onnx; the specific model is chosen via the
+/// voice/model selection. Cloud engines call their HTTP APIs.
 enum TtsBackendKind {
-  /// Local, free, standalone binary with per-language `.onnx` voices.
-  piper,
-
-  /// Local ONNX model (highest local quality), needs espeak-ng + onnxruntime.
-  kokoro,
+  /// Local, free, offline — sherpa-onnx running a downloaded model.
+  local,
 
   /// Cloud, OpenAI `gpt-4o-mini-tts` over HTTP.
   openai,
@@ -18,13 +19,12 @@ enum TtsBackendKind {
   elevenlabs;
 
   /// Whether this backend talks to a remote API (and thus needs an API key
-  /// rather than a locally installed binary/model).
+  /// rather than a locally downloaded model).
   bool get isCloud => this == openai || this == elevenlabs;
 
   /// Short label for the UI.
   String get label => switch (this) {
-        TtsBackendKind.piper => 'Piper (local, free)',
-        TtsBackendKind.kokoro => 'Kokoro (local, ONNX)',
+        TtsBackendKind.local => 'Local (free, offline)',
         TtsBackendKind.openai => 'OpenAI (cloud)',
         TtsBackendKind.elevenlabs => 'ElevenLabs (cloud)',
       };
@@ -89,7 +89,7 @@ class ConversionOptions {
     String voiceId = '',
   }) {
     return ConversionOptions(
-      backend: TtsBackendKind.piper,
+      backend: TtsBackendKind.local,
       languageCode: book.languageCode,
       voiceId: voiceId,
       speed: 1.0,

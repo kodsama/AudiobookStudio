@@ -5,10 +5,10 @@ import 'dart:typed_data';
 import 'package:archive/archive.dart';
 import 'package:audiobook_studio/data/audio/ffmpeg_service.dart';
 import 'package:audiobook_studio/data/deps/dependency_checker.dart';
-import 'package:audiobook_studio/data/deps/kokoro_installer.dart';
-import 'package:audiobook_studio/data/deps/piper_installer.dart';
+import 'package:audiobook_studio/data/deps/sherpa_model_installer.dart';
 import 'package:audiobook_studio/data/epub/epub_parser.dart';
 import 'package:audiobook_studio/data/process_runner.dart';
+import 'package:audiobook_studio/data/tts/sherpa_catalog.dart';
 import 'package:audiobook_studio/domain/conversion_options.dart';
 import 'package:audiobook_studio/domain/dependency.dart';
 import 'package:audiobook_studio/logic/app_controller.dart';
@@ -19,17 +19,16 @@ import 'package:http/http.dart' as http;
 import 'package:http/testing.dart';
 import 'package:path/path.dart' as p;
 
-/// Reports only the named binaries as present on PATH.
+/// Reports ffmpeg/ffprobe present (or absent) for deterministic gating.
 class ConfigurableRunner extends ProcessRunner {
-  final Set<String> present;
-  ConfigurableRunner(this.present);
+  final bool toolsPresent;
+  ConfigurableRunner({this.toolsPresent = true});
 
   @override
   Future<ProcessRunResult> run(String e, List<String> a, {String? stdinText}) async {
     if (e == 'which' || e == 'where') {
-      final bin = a.first;
-      return present.contains(bin)
-          ? ProcessRunResult(0, '/usr/bin/$bin\n', '')
+      return toolsPresent
+          ? ProcessRunResult(0, '/usr/bin/${a.first}\n', '')
           : const ProcessRunResult(1, '', '');
     }
     return ProcessRunResult(0, '$e version 1.0', '');
@@ -53,139 +52,91 @@ Uint8List _fixture() {
 
 late Directory _tmp;
 
-/// Creates fake Piper binary + voice files so the installer reports installed.
-void installPiperFiles(PiperInstaller piper, String voiceId) {
-  Directory(piper.piperDir).createSync(recursive: true);
-  File(piper.binaryPath).writeAsBytesSync(const [0]);
-  File(piper.voicePath(voiceId)).writeAsBytesSync(const [0]);
-  File(piper.voiceConfigPath(voiceId)).writeAsStringSync('{}');
+/// Creates a fake model file so the installer reports it installed.
+void installModelFiles(SherpaModelInstaller inst, SherpaModel model) {
+  final f = File(inst.modelPath(model));
+  f.parent.createSync(recursive: true);
+  f.writeAsBytesSync(const [0]);
 }
 
-({AppController controller, PiperInstaller piper, KokoroInstaller kokoro})
-    build(Set<String> present) {
-  final runner = ConfigurableRunner(present);
+({AppController controller, SherpaModelInstaller sherpa}) build(
+    {bool toolsPresent = true}) {
+  final runner = ConfigurableRunner(toolsPresent: toolsPresent);
   final log = LogController();
   final client = MockClient((_) async => http.Response('', 200));
-  final mdir = p.join(_tmp.path, 'm${present.hashCode}${present.length}');
-  final piper = PiperInstaller(modelsDir: mdir, client: client);
-  final kokoro = KokoroInstaller(modelsDir: mdir, client: client);
+  final sherpa = SherpaModelInstaller(
+      modelsDir: p.join(_tmp.path, 'm$toolsPresent'), client: client);
   final controller = AppController(
     parser: EpubParser(),
     ffmpeg: FfmpegService(runner),
     runner: runner,
     httpClient: client,
-    checker: DependencyChecker(runner, piper: piper, kokoro: kokoro),
-    piperInstaller: piper,
-    kokoroInstaller: kokoro,
+    checker: DependencyChecker(runner),
+    sherpaInstaller: sherpa,
     log: log,
     conversion: ConversionController(log: log),
     os: HostOs.macos,
-    modelsDir: piper.modelsDir,
     checkOnStart: false,
   );
-  return (controller: controller, piper: piper, kokoro: kokoro);
-}
-
-/// Creates fake Kokoro model + voices files so the installer reports installed.
-void installKokoroFiles(KokoroInstaller k) {
-  Directory(k.kokoroDir).createSync(recursive: true);
-  File(k.modelPath).writeAsBytesSync(const [0]);
-  File(k.voicesPath).writeAsBytesSync(const [0]);
+  return (controller: controller, sherpa: sherpa);
 }
 
 void main() {
   setUp(() => _tmp = Directory.systemTemp.createTempSync('appctrl_'));
   tearDown(() => _tmp.deleteSync(recursive: true));
 
-  test('cloud engines are always selectable; local need their tools', () async {
-    final c = build({'ffmpeg', 'ffprobe'}).controller;
-    await c.checkDeps();
-    expect(c.backendAvailable(TtsBackendKind.openai), isTrue);
-    expect(c.backendAvailable(TtsBackendKind.elevenlabs), isTrue);
-    expect(c.backendAvailable(TtsBackendKind.piper), isFalse); // not downloaded
-    expect(c.backendAvailable(TtsBackendKind.kokoro), isFalse);
-  });
-
-  test('piper becomes available once binary + voice are downloaded', () async {
-    final b = build({'ffmpeg', 'ffprobe'});
-    installPiperFiles(b.piper, 'fr_FR-siwis-medium'); // default fr voice
+  test('cloud engines are always selectable; local needs a downloaded model',
+      () async {
+    final b = build();
     await b.controller.loadBook(_fixture(), '/books/t.epub');
-    expect(b.controller.backendAvailable(TtsBackendKind.piper), isTrue);
-    expect(b.controller.options!.backend, TtsBackendKind.piper); // preferred
+    expect(b.controller.backendAvailable(TtsBackendKind.openai), isTrue);
+    expect(b.controller.backendAvailable(TtsBackendKind.elevenlabs), isTrue);
+    expect(b.controller.backendAvailable(TtsBackendKind.local), isFalse);
   });
 
-  test('core tools ready with ffmpeg/ffprobe, but not "Ready" with no engine',
-      () async {
-    final c = build({'ffmpeg', 'ffprobe'}).controller; // no engine installed
-    await c.checkDeps();
-    expect(c.coreToolsReady, isTrue);
-    expect(c.missingRequired, isEmpty);
-    // No local engine installed and no cloud key → not overall-ready.
-    expect(c.anyEngineReady, isFalse);
-    expect(c.environmentReady, isFalse);
-  });
-
-  test('anyEngineReady becomes true once a cloud key is entered', () async {
-    final c = build({'ffmpeg', 'ffprobe'}).controller;
-    await c.loadBook(_fixture(), '/books/t.epub'); // defaults to a cloud engine
-    expect(c.anyEngineReady, isFalse);
-    c.updateOptions((o) =>
-        o.copyWith(apiKeys: {o.backend.name: 'sk-test'}));
-    expect(c.anyEngineReady, isTrue);
-    expect(c.environmentReady, isTrue);
-  });
-
-  test('preferredBackend favours local Piper when it is installed', () async {
-    final b = build({'ffmpeg', 'ffprobe'});
-    installPiperFiles(b.piper, 'fr_FR-siwis-medium');
-    // Load so the book language (fr) drives the default voice check.
+  test('local engine available once its model is downloaded', () async {
+    final b = build();
     await b.controller.loadBook(_fixture(), '/books/t.epub');
-    expect(b.controller.preferredBackend(), TtsBackendKind.piper);
-  });
-
-  test('preferredBackend falls back to cloud when no local engine is ready',
-      () async {
-    final c = build({'ffmpeg', 'ffprobe'}).controller;
-    await c.checkDeps();
-    expect(c.preferredBackend(), TtsBackendKind.openai);
-  });
-
-  test('loadBook pre-selects a usable engine, not an unavailable one', () async {
-    final c = build({'ffmpeg', 'ffprobe'}).controller; // piper not downloaded
-    await c.loadBook(_fixture(), '/books/t.epub');
-    expect(c.options!.backend, TtsBackendKind.openai);
-    expect(c.backendAvailable(c.options!.backend), isTrue);
-  });
-
-  test('needsPiperSetup is true when Piper is chosen but not downloaded',
-      () async {
-    final c = build({'ffmpeg', 'ffprobe'}).controller;
-    await c.loadBook(_fixture(), '/books/t.epub');
-    c.updateOptions((o) => o.copyWith(backend: TtsBackendKind.piper));
-    expect(c.needsPiperSetup, isTrue);
-  });
-
-  test('kokoro needs espeak-ng + a model download before it is available',
-      () async {
-    final b = build({'ffmpeg', 'ffprobe', 'espeak-ng'});
-    await b.controller.loadBook(_fixture(), '/books/t.epub');
-    // espeak present but model not downloaded yet → unavailable, setup needed.
-    expect(b.controller.backendAvailable(TtsBackendKind.kokoro), isFalse);
-    b.controller.updateOptions((o) => o.copyWith(backend: TtsBackendKind.kokoro));
-    expect(b.controller.needsKokoroSetup, isTrue);
-
-    // After the model + voices are present, Kokoro is available.
-    installKokoroFiles(b.kokoro);
+    final model = sherpaModelById(b.controller.options!.voiceId)!;
+    installModelFiles(b.sherpa, model);
     await b.controller.checkDeps();
-    expect(b.controller.backendAvailable(TtsBackendKind.kokoro), isTrue);
-    expect(b.controller.needsKokoroSetup, isFalse);
+    expect(b.controller.backendAvailable(TtsBackendKind.local), isTrue);
+    expect(b.controller.needsModelDownload, isFalse);
   });
 
-  test('kokoro is unavailable without espeak-ng even if the model exists',
-      () async {
-    final b = build({'ffmpeg', 'ffprobe'}); // no espeak-ng
-    installKokoroFiles(b.kokoro);
+  test('core tools present but no engine -> not Ready', () async {
+    final b = build();
+    await b.controller.checkDeps();
+    expect(b.controller.coreToolsReady, isTrue);
+    expect(b.controller.anyEngineReady, isFalse);
+    expect(b.controller.environmentReady, isFalse);
+  });
+
+  test('loadBook pre-selects the local engine and a French model', () async {
+    final b = build();
     await b.controller.loadBook(_fixture(), '/books/t.epub');
-    expect(b.controller.backendAvailable(TtsBackendKind.kokoro), isFalse);
+    expect(b.controller.options!.backend, TtsBackendKind.local);
+    // French book -> a French model id is selected.
+    expect(sherpaModelById(b.controller.options!.voiceId)!.languages,
+        contains('fr'));
+    expect(b.controller.needsModelDownload, isTrue);
+  });
+
+  test('cloud engine becomes ready once an API key is entered', () async {
+    final b = build();
+    await b.controller.loadBook(_fixture(), '/books/t.epub');
+    await b.controller.setBackend(TtsBackendKind.openai);
+    expect(b.controller.anyEngineReady, isFalse);
+    b.controller.updateOptions(
+        (o) => o.copyWith(apiKeys: {o.backend.name: 'sk-test'}));
+    expect(b.controller.anyEngineReady, isTrue);
+    expect(b.controller.canConvert, isTrue);
+  });
+
+  test('Convert disabled when ffmpeg/ffprobe are missing', () async {
+    final b = build(toolsPresent: false);
+    await b.controller.loadBook(_fixture(), '/books/t.epub');
+    expect(b.controller.coreToolsReady, isFalse);
+    expect(b.controller.canConvert, isFalse);
   });
 }

@@ -1,7 +1,7 @@
 /// The UI-facing application state machine.
 ///
-/// Ties together parsing, options, dependency checks, and the conversion run
-/// behind one [ChangeNotifier] the widgets observe. Deliberately free of any
+/// Ties together parsing, options, dependency checks, model downloads and the
+/// conversion run behind one [ChangeNotifier] the widgets observe. Free of any
 /// Flutter widget or file-picker dependency (the UI hands it bytes/paths) so it
 /// can be unit/widget-tested directly.
 library;
@@ -16,11 +16,11 @@ import 'package:path/path.dart' as p;
 import '../data/audio/ffmpeg_service.dart';
 import '../data/deps/dependency_checker.dart';
 import '../data/deps/dependency_installer.dart';
-import '../data/deps/kokoro_installer.dart';
-import '../data/deps/piper_installer.dart';
+import '../data/deps/sherpa_model_installer.dart';
 import '../data/epub/epub_parser.dart';
 import '../data/process_runner.dart';
 import '../data/tts/backend_factory.dart';
+import '../data/tts/sherpa_catalog.dart';
 import '../data/tts/voice_catalog.dart';
 import '../domain/book.dart';
 import '../domain/conversion_options.dart';
@@ -36,12 +36,10 @@ class AppController extends ChangeNotifier {
   final ProcessRunner runner;
   final http.Client httpClient;
   final DependencyChecker checker;
-  final PiperInstaller piperInstaller;
-  final KokoroInstaller kokoroInstaller;
+  final SherpaModelInstaller sherpaInstaller;
   final LogController log;
   final ConversionController conversion;
   final HostOs os;
-  final String modelsDir;
 
   AppController({
     required this.parser,
@@ -49,16 +47,13 @@ class AppController extends ChangeNotifier {
     required this.runner,
     required this.httpClient,
     required this.checker,
-    required this.piperInstaller,
-    required this.kokoroInstaller,
+    required this.sherpaInstaller,
     required this.log,
     required this.conversion,
     required this.os,
-    required this.modelsDir,
     bool checkOnStart = true,
   }) {
     conversion.addListener(notifyListeners);
-    // Verify the toolkit immediately so step 1 is populated on launch.
     if (checkOnStart) unawaited(checkDeps());
   }
 
@@ -67,6 +62,7 @@ class AppController extends ChangeNotifier {
   List<DependencyStatus> _deps = const [];
   bool _depsChecked = false;
   bool _installing = false;
+  bool _installingModel = false;
   String? _parseError;
 
   /// The parsed book, or null before one is loaded.
@@ -75,14 +71,17 @@ class AppController extends ChangeNotifier {
   /// Current conversion options (null before a book is loaded).
   ConversionOptions? get options => _options;
 
-  /// Latest dependency statuses for the selected backend.
+  /// Latest dependency statuses.
   List<DependencyStatus> get deps => _deps;
 
   /// Whether a dependency check has completed at least once.
   bool get depsChecked => _depsChecked;
 
-  /// Whether an install is currently streaming.
+  /// Whether a system-package install is currently streaming.
   bool get installing => _installing;
+
+  /// Whether a local model download is in progress.
+  bool get installingModel => _installingModel;
 
   /// The last parse error message, if loading failed.
   String? get parseError => _parseError;
@@ -99,6 +98,18 @@ class AppController extends ChangeNotifier {
   List<DependencyStatus> get missingDeps =>
       _deps.where((d) => !d.found).toList();
 
+  /// The default voice/model id for an engine + language.
+  String _defaultVoice(TtsBackendKind backend, String lang) => backend.isCloud
+      ? VoiceCatalog.defaultVoiceId(backend, lang)
+      : defaultSherpaModelId(lang);
+
+  /// The selected local model descriptor, if the local engine is active.
+  SherpaModel? get selectedModel {
+    final o = _options;
+    if (o == null || o.backend != TtsBackendKind.local) return null;
+    return sherpaModelById(o.voiceId);
+  }
+
   /// Parses [bytes] from [sourcePath], derives default options, and checks deps.
   Future<void> loadBook(Uint8List bytes, String sourcePath) async {
     _parseError = null;
@@ -106,8 +117,6 @@ class AppController extends ChangeNotifier {
       final stem = p.basenameWithoutExtension(sourcePath);
       final book = parser.parse(bytes, fallbackTitle: stem);
       _book = book;
-      // Probe the environment first so we can pre-select an engine that is
-      // actually usable (local preferred over cloud).
       await checkDeps();
       final backend = preferredBackend();
       final dir = p.dirname(sourcePath);
@@ -116,7 +125,7 @@ class AppController extends ChangeNotifier {
         book,
         outputPath: p.join(dir, '$safe.m4b'),
         workDir: p.join(dir, '$safe.work'),
-        voiceId: VoiceCatalog.defaultVoiceId(backend, book.languageCode),
+        voiceId: _defaultVoice(backend, book.languageCode),
       ).copyWith(backend: backend);
       log.info('Loaded "${book.title}" — ${book.chapters.length} chapters '
           '· engine: ${backend.label}');
@@ -136,32 +145,26 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Switches backend and resets language/voice to that backend's defaults,
-  /// then re-checks dependencies.
+  /// Switches engine and resets language/voice to that engine's defaults.
   Future<void> setBackend(TtsBackendKind backend) async {
     final o = _options;
     final b = _book;
     if (o == null || b == null) return;
-    final langs = VoiceCatalog.languages(backend).map((l) => l.code).toList();
-    final lang = langs.contains(b.languageCode)
-        ? b.languageCode
-        : (langs.isEmpty ? b.languageCode : langs.first);
     _options = o.copyWith(
       backend: backend,
-      languageCode: lang,
-      voiceId: VoiceCatalog.defaultVoiceId(backend, lang),
+      languageCode: b.languageCode,
+      voiceId: _defaultVoice(backend, b.languageCode),
     );
     notifyListeners();
-    await checkDeps();
   }
 
-  /// Sets the narration language and resets the voice to its default.
+  /// Sets the narration language and resets the voice/model to its default.
   void setLanguage(String code) {
     final o = _options;
     if (o == null) return;
     _options = o.copyWith(
       languageCode: code,
-      voiceId: VoiceCatalog.defaultVoiceId(o.backend, code),
+      voiceId: _defaultVoice(o.backend, code),
     );
     notifyListeners();
   }
@@ -176,8 +179,7 @@ class AppController extends ChangeNotifier {
     notifyListeners();
   }
 
-  /// Probes every known dependency (across all engines) so the toolkit shows
-  /// the full picture. Runs on launch and whenever the backend changes.
+  /// Probes the system tools (ffmpeg/ffprobe). Runs on launch.
   Future<void> checkDeps() async {
     _deps = await checker.checkAll(os: os);
     _depsChecked = true;
@@ -196,13 +198,11 @@ class AppController extends ChangeNotifier {
   List<DependencyStatus> get missingRequired =>
       _deps.where((d) => d.kind.isRequired && !d.found).toList();
 
-  /// Whether the *core* tools (ffmpeg/ffprobe) are present. This gates choosing
-  /// a book; engine-specific tools are handled per engine afterwards.
+  /// Whether the core tools (ffmpeg/ffprobe) are present. Gates choosing a book.
   bool get coreToolsReady => _depsChecked && missingRequired.isEmpty;
 
-  /// Whether at least one TTS engine is actually usable right now: a local
-  /// engine is installed, or a cloud engine has an API key entered. Used so the
-  /// toolkit doesn't claim "Ready" when no engine can speak.
+  /// Whether at least one TTS engine is usable now: a local model is downloaded,
+  /// or a cloud engine has an API key entered.
   bool get anyEngineReady => TtsBackendKind.values.any((k) {
         if (!backendAvailable(k)) return false;
         if (k.isCloud) {
@@ -211,133 +211,63 @@ class AppController extends ChangeNotifier {
         return true;
       });
 
-  /// Overall readiness shown as "Ready": core tools present *and* a usable
-  /// engine exists.
+  /// Overall readiness shown as "Ready".
   bool get environmentReady => coreToolsReady && anyEngineReady;
 
-  /// Whether [backend] is installed/configured enough to be *selectable*.
-  ///
-  /// Cloud engines are always selectable (you configure them by entering an API
-  /// key after selecting). Local engines require their tools to be present:
-  /// Piper needs the piper binary; Kokoro needs espeak-ng and its model. This
-  /// excludes the API-key check, which gates conversion (not selection).
+  /// Whether [backend] is usable enough to run. Cloud is always "available"
+  /// (configured via API key); local requires the selected model downloaded.
   bool backendAvailable(TtsBackendKind backend) {
     if (backend.isCloud) return true;
     if (!_depsChecked) return false;
-    if (backend == TtsBackendKind.piper) {
-      // Needs the downloaded binary AND the chosen voice (defaulting to the
-      // book's language when no options exist yet).
-      if (!piperInstaller.isBinaryInstalled()) return false;
-      final voiceId = _options?.voiceId ??
-          VoiceCatalog.defaultVoiceId(
-              TtsBackendKind.piper, _book?.languageCode ?? 'en');
-      return piperInstaller.isVoiceInstalled(voiceId);
-    }
-    if (backend == TtsBackendKind.kokoro) {
-      // Needs espeak-ng (for phonemes) and the downloaded model + voices.
-      final espeak = statusOf(DependencyKind.espeakNg)?.found ?? false;
-      return espeak && kokoroInstaller.isInstalled();
-    }
-    return true;
+    final model = _localModelFor(backend);
+    return model != null && sherpaInstaller.isInstalled(model);
   }
 
-  /// Whether Piper is selected but its binary/voice still need downloading.
-  bool get needsPiperSetup {
+  /// Resolves the local model that [backend] would use (selected, else default).
+  SherpaModel? _localModelFor(TtsBackendKind backend) {
+    if (backend != TtsBackendKind.local) return null;
+    final id = _options?.voiceId ??
+        defaultSherpaModelId(_book?.languageCode ?? 'en');
+    return sherpaModelById(id);
+  }
+
+  /// Whether the local engine is selected but its model still needs downloading.
+  bool get needsModelDownload {
     final o = _options;
     return o != null &&
-        o.backend == TtsBackendKind.piper &&
-        !backendAvailable(TtsBackendKind.piper);
+        o.backend == TtsBackendKind.local &&
+        !backendAvailable(TtsBackendKind.local);
   }
 
-  bool _installingPiper = false;
-
-  /// Whether a Piper download is in progress.
-  bool get installingPiper => _installingPiper;
-
-  /// Downloads the Piper binary and the selected voice (whatever is missing),
-  /// streaming progress to the log, then re-checks dependencies.
-  Future<void> setupPiper() async {
-    final o = _options;
-    if (o == null || _installingPiper) return;
-    _installingPiper = true;
+  /// Downloads the selected local model (+ vocoder), streaming progress.
+  Future<void> setupModel() async {
+    final model = _localModelFor(TtsBackendKind.local);
+    if (model == null || _installingModel) return;
+    _installingModel = true;
     notifyListeners();
     try {
-      await for (final line in piperInstaller.ensureInstalled(o.voiceId)) {
+      await for (final line in sherpaInstaller.ensureInstalled(model)) {
         log.info(line);
       }
     } on Object catch (e) {
-      log.error('Piper setup failed: $e');
+      log.error('Model download failed: $e');
     } finally {
-      _installingPiper = false;
+      _installingModel = false;
       await checkDeps();
       notifyListeners();
     }
   }
 
-  /// Whether Kokoro is selected but its model/voices still need downloading.
-  bool get needsKokoroSetup {
-    final o = _options;
-    return o != null &&
-        o.backend == TtsBackendKind.kokoro &&
-        (statusOf(DependencyKind.espeakNg)?.found ?? false) &&
-        !kokoroInstaller.isInstalled();
-  }
+  /// A short reason an unavailable [backend] can't run, for the UI.
+  String unavailableReason(TtsBackendKind backend) =>
+      backend == TtsBackendKind.local ? 'download a model' : 'unavailable';
 
-  bool _installingKokoro = false;
+  /// The engine to pre-select. Always the free, offline local engine — if its
+  /// model isn't downloaded yet, the UI offers a one-click download. Users can
+  /// switch to a cloud engine explicitly.
+  TtsBackendKind preferredBackend() => TtsBackendKind.local;
 
-  /// Whether a Kokoro download is in progress.
-  bool get installingKokoro => _installingKokoro;
-
-  /// Downloads the Kokoro model + voices, streaming progress, then re-checks.
-  Future<void> setupKokoro() async {
-    if (_installingKokoro) return;
-    _installingKokoro = true;
-    notifyListeners();
-    try {
-      await for (final line in kokoroInstaller.ensureInstalled()) {
-        log.info(line);
-      }
-    } on Object catch (e) {
-      log.error('Kokoro setup failed: $e');
-    } finally {
-      _installingKokoro = false;
-      await checkDeps();
-      notifyListeners();
-    }
-  }
-
-  /// Whether the Piper engine can be auto-installed on this platform.
-  bool get piperAutoInstallSupported => piperInstaller.autoInstallSupported;
-
-  /// A short reason an unavailable [backend] can't be selected, for the UI.
-  String unavailableReason(TtsBackendKind backend) => switch (backend) {
-        TtsBackendKind.piper =>
-          piperAutoInstallSupported ? 'needs download' : 'no macOS build',
-        TtsBackendKind.kokoro => (statusOf(DependencyKind.espeakNg)?.found ?? false)
-            ? 'needs download'
-            : 'needs espeak-ng',
-        _ => 'unavailable',
-      };
-
-  /// Engine preference order: local engines first (free, offline), then cloud.
-  static const List<TtsBackendKind> _backendPreference = [
-    TtsBackendKind.piper,
-    TtsBackendKind.kokoro,
-    TtsBackendKind.openai,
-    TtsBackendKind.elevenlabs,
-  ];
-
-  /// The best engine to pre-select: the first *available* one in preference
-  /// order (local before cloud), falling back to OpenAI if none are ready.
-  TtsBackendKind preferredBackend() {
-    for (final k in _backendPreference) {
-      if (backendAvailable(k)) return k;
-    }
-    return TtsBackendKind.openai;
-  }
-
-  /// Whether the *currently selected* engine can actually run: it is available
-  /// and, for cloud engines, an API key is set.
+  /// Whether the selected engine can run now: available and (cloud) keyed.
   bool get selectedBackendReady {
     final o = _options;
     if (o == null) return false;
@@ -348,14 +278,15 @@ class AppController extends ChangeNotifier {
     return true;
   }
 
-  /// Installs missing system packages, streaming log lines, then re-checks.
+  /// Installs missing system packages (ffmpeg), streaming log lines.
   Future<void> installMissing() async {
     if (_installing) return;
     _installing = true;
     notifyListeners();
     try {
       final installer = DependencyInstaller.forOs(os, runner);
-      await for (final line in installer.install(missingDeps.map((d) => d.kind).toList())) {
+      await for (final line
+          in installer.install(missingDeps.map((d) => d.kind).toList())) {
         log.info(line);
       }
       await checkDeps();
@@ -365,9 +296,7 @@ class AppController extends ChangeNotifier {
     }
   }
 
-  /// Whether the Convert action should be enabled: a book is loaded, an output
-  /// path is set, not already converting, and the backend is runnable (cloud →
-  /// API key present; local → required deps found).
+  /// Whether the Convert action should be enabled.
   bool get canConvert {
     final o = _options;
     if (o == null || _book == null || isConverting) return false;
@@ -383,11 +312,7 @@ class AppController extends ChangeNotifier {
     if (o == null || b == null) return;
     try {
       final backend = makeBackend(o,
-          runner: runner,
-          httpClient: httpClient,
-          modelsDir: modelsDir,
-          piper: piperInstaller,
-          kokoro: kokoroInstaller);
+          runner: runner, httpClient: httpClient, sherpa: sherpaInstaller);
       await conversion.run(b, o, backend: backend, ffmpeg: ffmpeg);
     } on Object catch (e) {
       log.error('Conversion could not start: $e');

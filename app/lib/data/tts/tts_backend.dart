@@ -25,4 +25,7 @@ abstract class TtsBackend {
   /// Implementations must produce a readable WAV even for empty/degenerate
   /// input (e.g. a short silent clip) so chapter assembly never fails.
   Future<void> synth(String text, String outWavPath);
+
+  /// Releases any resources (e.g. a worker isolate). Default: no-op.
+  Future<void> dispose() async {}
 }

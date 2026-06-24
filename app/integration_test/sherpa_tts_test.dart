@@ -1,45 +1,40 @@
-// Make-or-break: verify sherpa-onnx builds and runs offline TTS on macOS,
-// producing French audio from the VITS Piper model.
+// Verifies sherpa-onnx TTS runs via the worker-isolate backend on macOS,
+// producing French audio. Requires the Piper model pre-downloaded to the
+// scratchpad models dir (the CLI e2e leaves it there).
 //
-// Requires the model pre-extracted to the scratchpad path below.
 // Run with: flutter test integration_test/sherpa_tts_test.dart -d macos
 import 'dart:io';
 
+import 'package:audiobook_studio/data/deps/sherpa_model_installer.dart';
+import 'package:audiobook_studio/data/tts/sherpa_catalog.dart';
+import 'package:audiobook_studio/data/tts/sherpa_tts_backend.dart';
 import 'package:flutter_test/flutter_test.dart';
+import 'package:http/http.dart' as http;
 import 'package:integration_test/integration_test.dart';
-import 'package:sherpa_onnx/sherpa_onnx.dart' as sherpa;
 
-const _model =
-    '/private/tmp/claude-501/-Users-alexandremartins-Developer-EpubToM4b/7496ede6-f7e9-479b-a9fc-f27224df3676/scratchpad/vits-piper-fr_FR-siwis-medium';
+const _modelsDir =
+    '/private/tmp/claude-501/-Users-alexandremartins-Developer-EpubToM4b/7496ede6-f7e9-479b-a9fc-f27224df3676/scratchpad/climodels';
 
 void main() {
   IntegrationTestWidgetsFlutterBinding.ensureInitialized();
 
-  testWidgets('sherpa-onnx synthesizes French audio (VITS) on macOS',
+  testWidgets('SherpaTtsBackend synthesizes French audio via a worker isolate',
       (tester) async {
-    if (!File('$_model/fr_FR-siwis-medium.onnx').existsSync()) {
-      markTestSkipped('model not downloaded');
+    final installer =
+        SherpaModelInstaller(modelsDir: _modelsDir, client: http.Client());
+    final model = sherpaModelById('piper')!;
+    if (!installer.isInstalled(model)) {
+      markTestSkipped('piper model not downloaded to $_modelsDir');
       return;
     }
-    sherpa.initBindings();
-    final tts = sherpa.OfflineTts(sherpa.OfflineTtsConfig(
-      model: sherpa.OfflineTtsModelConfig(
-        vits: sherpa.OfflineTtsVitsModelConfig(
-          model: '$_model/fr_FR-siwis-medium.onnx',
-          tokens: '$_model/tokens.txt',
-          dataDir: '$_model/espeak-ng-data',
-        ),
-        numThreads: 2,
-        debug: false,
-      ),
-    ));
+    final backend = SherpaTtsBackend(
+        model: model, languageCode: 'fr', installer: installer);
+    final out = '$_modelsDir/../sherpa_backend_test.wav';
+    await backend.synth('Bonjour, ceci est un test.', out);
+    await backend.dispose();
 
-    final audio = tts.generate(
-        text: 'Bonjour, ceci est un test de synthèse vocale.', speed: 1.0);
-    tts.free();
-
-    expect(audio.sampleRate, greaterThan(0));
-    expect(audio.samples.length, greaterThan(audio.sampleRate ~/ 2),
-        reason: 'expected > ~0.5s of audio');
+    final f = File(out);
+    expect(f.existsSync(), isTrue);
+    expect(f.lengthSync(), greaterThan(44 + 22050)); // > ~0.5s of 22kHz audio
   });
 }

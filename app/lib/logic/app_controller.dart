@@ -340,13 +340,15 @@ class AppController extends ChangeNotifier {
     final o = _options;
     final b = _book;
     if (o == null || b == null) return;
+    final backend = makeBackend(o,
+        runner: runner, httpClient: httpClient, sherpa: sherpaInstaller);
     try {
-      final backend = makeBackend(o,
-          runner: runner, httpClient: httpClient, sherpa: sherpaInstaller);
       await conversion.run(b, o, backend: backend, ffmpeg: ffmpeg);
     } on Object catch (e) {
       log.error('Conversion could not start: $e');
       conversion.markError('Could not start: $e');
+    } finally {
+      await backend.dispose();
     }
   }
 

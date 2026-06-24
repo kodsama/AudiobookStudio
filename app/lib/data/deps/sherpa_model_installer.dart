@@ -2,6 +2,7 @@
 library;
 
 import 'dart:io';
+import 'dart:isolate';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
@@ -73,30 +74,22 @@ class SherpaModelInstaller {
         yield 'Downloading ${model.label} ($langs, ~${voice.sizeMb} MB)…';
         final bytes = await _download(voice.archiveUrl, onProgress: report);
         yield 'Extracting ${model.label} ($langs)…';
-        _extractTarBz2(bytes, root);
+        // bzip2 + tar decode is CPU-heavy and synchronous → run off-isolate so
+        // the UI stays responsive.
+        final dest = root;
+        await Isolate.run(() => extractTarBz2(bytes, dest));
         yield '${model.label} ($langs) installed.';
       }
       if (voice.vocoderFile.isNotEmpty &&
           !File(vocoderPath(voice)).existsSync()) {
         yield 'Downloading vocoder…';
-        File(vocoderPath(voice)).writeAsBytesSync(await _download(voice.vocoderUrl));
+        await File(vocoderPath(voice))
+            .writeAsBytes(await _download(voice.vocoderUrl));
         yield 'Vocoder installed.';
       }
     }
     onProgress?.call(1);
     yield '${model.label} is ready.';
-  }
-
-  /// Extracts a `.tar.bz2` archive into [destDir].
-  void _extractTarBz2(Uint8List bytes, String destDir) {
-    final tar = BZip2Decoder().decodeBytes(bytes);
-    final archive = TarDecoder().decodeBytes(tar);
-    for (final entry in archive) {
-      if (!entry.isFile) continue;
-      final out = File(p.join(destDir, entry.name));
-      out.parent.createSync(recursive: true);
-      out.writeAsBytesSync(entry.content as List<int>);
-    }
   }
 
   /// Streams a download with byte-level [onProgress] (0–1) and retries on
@@ -131,5 +124,18 @@ class SherpaModelInstaller {
       }
     }
     throw HttpException('Download failed after $maxAttempts attempts: $lastError');
+  }
+}
+
+/// Extracts a `.tar.bz2` archive into [destDir]. Top-level so it can run inside
+/// `Isolate.run` (bzip2 + tar decode is CPU-heavy and synchronous).
+void extractTarBz2(Uint8List bytes, String destDir) {
+  final tar = BZip2Decoder().decodeBytes(bytes);
+  final archive = TarDecoder().decodeBytes(tar);
+  for (final entry in archive) {
+    if (!entry.isFile) continue;
+    final out = File(p.join(destDir, entry.name));
+    out.parent.createSync(recursive: true);
+    out.writeAsBytesSync(entry.content as List<int>);
   }
 }

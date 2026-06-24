@@ -4,13 +4,16 @@ library;
 import '../../domain/conversion_options.dart';
 import '../../domain/dependency.dart';
 import '../process_runner.dart';
+import 'piper_installer.dart';
 
 /// Resolves which dependencies a given [TtsBackendKind] requires and whether
-/// each is present on this machine, using `which`/`where` to locate binaries.
+/// each is present on this machine, using `which`/`where` to locate binaries
+/// and a [PiperInstaller] to detect app-managed Piper downloads.
 class DependencyChecker {
   final ProcessRunner _runner;
+  final PiperInstaller? _piper;
 
-  DependencyChecker(this._runner);
+  DependencyChecker(this._runner, {PiperInstaller? piper}) : _piper = piper;
 
   /// The dependencies required to run [backend]. ffmpeg/ffprobe are always
   /// needed; Piper adds the piper binary + a voice; Kokoro adds espeak-ng + its
@@ -55,12 +58,31 @@ class DependencyChecker {
   /// deps (voices/models) are reported missing here and handled by the
   /// downloader UI.
   Future<DependencyStatus> _probe(DependencyKind kind, HostOs os) async {
+    // App-managed Piper voice download.
+    if (kind == DependencyKind.piperVoice) {
+      final has = _piper?.hasAnyVoice() ?? false;
+      return DependencyStatus(
+        kind: kind,
+        found: has,
+        location: has ? 'downloaded' : null,
+        installHint: has ? null : _downloadHint(kind),
+      );
+    }
     final bin = kind.binaryName;
     if (bin == null) {
       return DependencyStatus(
         kind: kind,
         found: false,
         installHint: _downloadHint(kind),
+      );
+    }
+    // App-managed Piper binary takes precedence over a PATH lookup.
+    if (kind == DependencyKind.piper && (_piper?.isBinaryInstalled() ?? false)) {
+      return DependencyStatus(
+        kind: kind,
+        found: true,
+        location: _piper!.binaryPath,
+        version: 'downloaded',
       );
     }
     final locator = os == HostOs.windows ? 'where' : 'which';

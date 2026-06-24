@@ -16,6 +16,7 @@ import 'package:path/path.dart' as p;
 import '../data/audio/ffmpeg_service.dart';
 import '../data/deps/dependency_checker.dart';
 import '../data/deps/dependency_installer.dart';
+import '../data/deps/piper_installer.dart';
 import '../data/epub/epub_parser.dart';
 import '../data/process_runner.dart';
 import '../data/tts/backend_factory.dart';
@@ -34,6 +35,7 @@ class AppController extends ChangeNotifier {
   final ProcessRunner runner;
   final http.Client httpClient;
   final DependencyChecker checker;
+  final PiperInstaller piperInstaller;
   final LogController log;
   final ConversionController conversion;
   final HostOs os;
@@ -45,6 +47,7 @@ class AppController extends ChangeNotifier {
     required this.runner,
     required this.httpClient,
     required this.checker,
+    required this.piperInstaller,
     required this.log,
     required this.conversion,
     required this.os,
@@ -202,21 +205,67 @@ class AppController extends ChangeNotifier {
   /// Piper needs the piper binary; Kokoro needs espeak-ng and its model. This
   /// excludes the API-key check, which gates conversion (not selection).
   bool backendAvailable(TtsBackendKind backend) {
-    if (!_depsChecked) return backend.isCloud;
     if (backend.isCloud) return true;
-    final binsOk = checker
-        .requiredFor(backend)
-        .where((k) => k.binaryName != null)
-        .every((k) => statusOf(k)?.found ?? false);
+    if (!_depsChecked) return false;
+    if (backend == TtsBackendKind.piper) {
+      // Needs the downloaded binary AND the chosen voice (defaulting to the
+      // book's language when no options exist yet).
+      if (!piperInstaller.isBinaryInstalled()) return false;
+      final voiceId = _options?.voiceId ??
+          VoiceCatalog.defaultVoiceId(
+              TtsBackendKind.piper, _book?.languageCode ?? 'en');
+      return piperInstaller.isVoiceInstalled(voiceId);
+    }
     if (backend == TtsBackendKind.kokoro) {
+      final binsOk = checker
+          .requiredFor(backend)
+          .where((k) => k.binaryName != null)
+          .every((k) => statusOf(k)?.found ?? false);
       return binsOk && (statusOf(DependencyKind.kokoroModel)?.found ?? false);
     }
-    return binsOk;
+    return true;
   }
+
+  /// Whether Piper is selected but its binary/voice still need downloading.
+  bool get needsPiperSetup {
+    final o = _options;
+    return o != null &&
+        o.backend == TtsBackendKind.piper &&
+        !backendAvailable(TtsBackendKind.piper);
+  }
+
+  bool _installingPiper = false;
+
+  /// Whether a Piper download is in progress.
+  bool get installingPiper => _installingPiper;
+
+  /// Downloads the Piper binary and the selected voice (whatever is missing),
+  /// streaming progress to the log, then re-checks dependencies.
+  Future<void> setupPiper() async {
+    final o = _options;
+    if (o == null || _installingPiper) return;
+    _installingPiper = true;
+    notifyListeners();
+    try {
+      await for (final line in piperInstaller.ensureInstalled(o.voiceId)) {
+        log.info(line);
+      }
+    } on Object catch (e) {
+      log.error('Piper setup failed: $e');
+    } finally {
+      _installingPiper = false;
+      await checkDeps();
+      notifyListeners();
+    }
+  }
+
+  /// Whether the Piper engine can be auto-installed on this platform.
+  bool get piperAutoInstallSupported => piperInstaller.autoInstallSupported;
 
   /// A short reason an unavailable [backend] can't be selected, for the UI.
   String unavailableReason(TtsBackendKind backend) => switch (backend) {
-        TtsBackendKind.piper => 'install piper',
+        TtsBackendKind.piper =>
+          piperAutoInstallSupported ? 'needs download' : 'no macOS build',
         TtsBackendKind.kokoro => 'coming soon',
         _ => 'unavailable',
       };
@@ -285,7 +334,10 @@ class AppController extends ChangeNotifier {
     if (o == null || b == null) return;
     try {
       final backend = makeBackend(o,
-          runner: runner, httpClient: httpClient, modelsDir: modelsDir);
+          runner: runner,
+          httpClient: httpClient,
+          modelsDir: modelsDir,
+          piper: piperInstaller);
       await conversion.run(b, o, backend: backend, ffmpeg: ffmpeg);
     } on Object catch (e) {
       log.error('Conversion could not start: $e');

@@ -9,6 +9,7 @@ import 'package:path_provider/path_provider.dart';
 
 import 'data/audio/ffmpeg_service.dart';
 import 'data/deps/dependency_checker.dart';
+import 'data/deps/piper_installer.dart';
 import 'data/epub/epub_parser.dart';
 import 'data/process_runner.dart';
 import 'logic/app_controller.dart';
@@ -29,12 +30,15 @@ Future<void> main() async {
 AppController buildAppController({required String modelsDir}) {
   final runner = SystemProcessRunner();
   final log = LogController();
+  final httpClient = http.Client();
+  final piper = PiperInstaller(modelsDir: modelsDir, client: httpClient);
   return AppController(
     parser: EpubParser(),
     ffmpeg: FfmpegService(runner),
     runner: runner,
-    httpClient: http.Client(),
-    checker: DependencyChecker(runner),
+    httpClient: httpClient,
+    checker: DependencyChecker(runner, piper: piper),
+    piperInstaller: piper,
     log: log,
     conversion: ConversionController(log: log),
     os: currentHostOs(),

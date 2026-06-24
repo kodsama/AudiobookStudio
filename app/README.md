@@ -64,10 +64,17 @@ The app's **step 2** checks these and offers to install the missing ones:
 |---|---|---|---|
 | ffmpeg / ffprobe | `brew install ffmpeg` | `apt-get install ffmpeg` | `winget install Gyan.FFmpeg` |
 | espeak-ng (Kokoro) | `brew install espeak-ng` | `apt-get install espeak-ng` | `winget install eSpeak-NG.eSpeak-NG` |
-| piper binary + voice | fetched by the in-app downloader from [rhasspy/piper](https://github.com/rhasspy/piper) |||
+| piper binary + voice | **auto-downloaded in-app on Linux/Windows** from [rhasspy/piper](https://github.com/rhasspy/piper) + [piper-voices](https://huggingface.co/rhasspy/piper-voices) |||
 
 Cloud engines (OpenAI / ElevenLabs) need no local install — just paste an API
 key into the options panel.
+
+> **Piper on macOS:** upstream's standalone macOS release is currently broken
+> (the "aarch64" asset ships an x86_64 binary and omits its bundled libraries),
+> and the maintained fork distributes Python wheels only. So in-app Piper
+> auto-install is enabled on **Linux/Windows** but not macOS yet. On macOS use a
+> cloud engine, or install a working `piper` on your `PATH` manually. The app
+> detects this and shows an honest note instead of a broken download.
 
 ---
 

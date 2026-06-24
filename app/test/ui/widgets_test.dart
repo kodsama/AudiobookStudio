@@ -1,9 +1,11 @@
 import 'dart:convert';
+import 'dart:io';
 import 'dart:typed_data';
 
 import 'package:archive/archive.dart';
 import 'package:audiobook_studio/data/audio/ffmpeg_service.dart';
 import 'package:audiobook_studio/data/deps/dependency_checker.dart';
+import 'package:audiobook_studio/data/deps/piper_installer.dart';
 import 'package:audiobook_studio/data/epub/epub_parser.dart';
 import 'package:audiobook_studio/data/process_runner.dart';
 import 'package:audiobook_studio/domain/conversion_options.dart';
@@ -63,16 +65,21 @@ Uint8List fixtureEpub() {
 AppController makeController({bool depsFound = true}) {
   final runner = FakeRunner(found: depsFound);
   final log = LogController();
+  final client = MockClient((_) async => http.Response('', 200));
+  final piper = PiperInstaller(
+      modelsDir: Directory.systemTemp.createTempSync('wtest_').path,
+      client: client);
   return AppController(
     parser: EpubParser(),
     ffmpeg: FfmpegService(runner),
     runner: runner,
-    httpClient: MockClient((_) async => http.Response('', 200)),
-    checker: DependencyChecker(runner),
+    httpClient: client,
+    checker: DependencyChecker(runner, piper: piper),
+    piperInstaller: piper,
     log: log,
     conversion: ConversionController(log: log),
     os: HostOs.macos,
-    modelsDir: '/tmp/models',
+    modelsDir: piper.modelsDir,
   );
 }
 
@@ -90,10 +97,12 @@ void main() {
     expect(btn.onPressed, isNull); // disabled
   });
 
-  testWidgets('ConvertBar enables once a book is loaded and deps are present',
+  testWidgets('ConvertBar enables once a book is loaded and an engine is ready',
       (tester) async {
     final c = makeController(depsFound: true);
     await c.loadBook(fixtureEpub(), '/books/test.epub');
+    // Default engine is cloud (no local Piper downloaded); provide its key.
+    c.updateOptions((o) => o.copyWith(apiKeys: {o.backend.name: 'sk-test'}));
     await tester.pumpWidget(wrap(ConvertBar(controller: c)));
     await tester.pump();
     expect(c.book, isNotNull);
@@ -123,11 +132,13 @@ void main() {
     )));
     await tester.pumpAndSettle();
 
-    // Default is Piper (local) → no API key field.
-    expect(find.text('API key'), findsNothing);
+    // Force a local engine → no API key field.
+    c.updateOptions((o) => o.copyWith(backend: TtsBackendKind.piper));
+    await tester.pumpAndSettle();
     expect(find.textContaining('API key'), findsNothing);
 
-    await c.setBackend(TtsBackendKind.openai);
+    // Switch to a cloud engine → API key field appears.
+    c.updateOptions((o) => o.copyWith(backend: TtsBackendKind.openai));
     await tester.pumpAndSettle();
     expect(find.textContaining('API key'), findsOneWidget);
   });

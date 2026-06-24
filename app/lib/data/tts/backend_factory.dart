@@ -5,6 +5,7 @@ import 'package:http/http.dart' as http;
 import 'package:path/path.dart' as p;
 
 import '../../domain/conversion_options.dart';
+import '../deps/piper_installer.dart';
 import '../process_runner.dart';
 import 'elevenlabs_backend.dart';
 import 'openai_backend.dart';
@@ -24,14 +25,17 @@ TtsBackend makeBackend(
   required ProcessRunner runner,
   required http.Client httpClient,
   required String modelsDir,
+  PiperInstaller? piper,
 }) {
   switch (options.backend) {
     case TtsBackendKind.piper:
-      final modelPath =
+      // Use the downloaded binary + voice when an installer is provided.
+      final modelPath = piper?.voicePath(options.voiceId) ??
           p.join(modelsDir, 'piper', '${options.voiceId}.onnx');
       return PiperBackend(
         runner: runner,
         modelPath: modelPath,
+        piperBin: piper?.binaryPath ?? 'piper',
         speed: options.speed,
       );
     case TtsBackendKind.openai:

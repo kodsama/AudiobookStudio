@@ -38,6 +38,10 @@ class OptionsPanel extends StatelessWidget {
                   _voiceField(o),
                   _bitrateField(o),
                 ]),
+                if (controller.needsPiperSetup) ...[
+                  const SizedBox(height: 16),
+                  _PiperSetup(controller: controller),
+                ],
                 const SizedBox(height: 18),
                 _speedSlider(context, o),
                 if (o.backend.isCloud) ...[
@@ -158,6 +162,75 @@ class OptionsPanel extends StatelessWidget {
         ),
       );
 
+}
+
+/// One-click Piper setup: downloads the binary + selected voice on demand.
+class _PiperSetup extends StatelessWidget {
+  final AppController controller;
+  const _PiperSetup({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    final installing = controller.installingPiper;
+    // Upstream Piper has no working standalone macOS binary; be honest instead
+    // of offering a button that yields a broken engine.
+    if (!controller.piperAutoInstallSupported) {
+      return Container(
+        padding: const EdgeInsets.all(14),
+        decoration: BoxDecoration(
+          color: AppTokens.rust.withValues(alpha: 0.10),
+          borderRadius: BorderRadius.circular(12),
+          border: Border.all(color: AppTokens.rust.withValues(alpha: 0.30)),
+        ),
+        child: Row(
+          children: [
+            const Icon(Icons.info_outline_rounded,
+                size: 18, color: AppTokens.rust),
+            const SizedBox(width: 10),
+            Expanded(
+              child: Text(
+                "Piper has no working macOS build upstream yet. Use a cloud "
+                "engine (OpenAI / ElevenLabs) for now, or install piper manually.",
+                style: Theme.of(context).textTheme.bodySmall,
+              ),
+            ),
+          ],
+        ),
+      );
+    }
+    return Container(
+      padding: const EdgeInsets.all(14),
+      decoration: BoxDecoration(
+        color: AppTokens.amber.withValues(alpha: 0.10),
+        borderRadius: BorderRadius.circular(12),
+        border: Border.all(color: AppTokens.amber.withValues(alpha: 0.30)),
+      ),
+      child: Row(
+        children: [
+          FilledButton.icon(
+            onPressed: installing ? null : controller.setupPiper,
+            icon: installing
+                ? const SizedBox(
+                    width: 16,
+                    height: 16,
+                    child: CircularProgressIndicator(
+                        strokeWidth: 2, color: AppTokens.ink))
+                : const Icon(Icons.download_rounded, size: 18),
+            label: Text(installing ? 'Downloading…' : 'Download Piper + voice'),
+          ),
+          const SizedBox(width: 12),
+          Expanded(
+            child: Text(
+              installing
+                  ? 'Fetching the engine and voice (~80 MB). Watch the log below.'
+                  : 'Piper is free and offline. One-time ~80 MB download to enable it.',
+              style: Theme.of(context).textTheme.bodySmall,
+            ),
+          ),
+        ],
+      ),
+    );
+  }
 }
 
 /// Obscured API-key input that owns its [TextEditingController] so typing isn't

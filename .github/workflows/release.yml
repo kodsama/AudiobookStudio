@@ -1,9 +1,9 @@
 name: Release builds
 
-# On a pushed tag (v*) — or manually for an existing tag — this creates the
-# GitHub release and builds native installers for macOS, Linux and Windows.
-# Each installer bundles BOTH the desktop app and the headless CLI (the CLI is
-# part of the app), so there's one download per platform.
+# On a pushed tag (v*) — or manually for an existing tag — creates the GitHub
+# release and builds native installers. Each one bundles BOTH the desktop app
+# and the headless CLI (the CLI is part of the app). All Flutter builds are
+# obfuscated (--obfuscate --split-debug-info).
 on:
   push:
     tags: ['v*']
@@ -15,6 +15,9 @@ on:
 
 permissions:
   contents: write
+
+env:
+  FLUTTER_VERSION: 3.44.3
 
 jobs:
   create-release:
@@ -55,26 +58,30 @@ jobs:
       - uses: actions/checkout@v4
         with:
           ref: ${{ github.event.inputs.tag || github.ref_name }}
-
       - uses: subosito/flutter-action@v2
         with:
-          flutter-version: 3.44.3
+          flutter-version: ${{ env.FLUTTER_VERSION }}
           channel: stable
           cache: true
 
       - name: Linux build dependencies
         if: matrix.target == 'linux'
-        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config liblzma-dev
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config liblzma-dev rpm ruby
+          sudo gem install --no-document fpm
+          wget -qO /tmp/appimagetool "https://github.com/AppImage/appimagetool/releases/download/continuous/appimagetool-x86_64.AppImage"
+          chmod +x /tmp/appimagetool
 
-      - name: Build desktop app
+      - name: Build desktop app (obfuscated)
         working-directory: app
-        run: flutter build ${{ matrix.target }} --release
+        run: flutter build ${{ matrix.target }} --release --obfuscate --split-debug-info=build/symbols/${{ matrix.target }}
 
       - name: Build CLI
         working-directory: app
         run: dart build cli
 
-      # ---- macOS: embed CLI in the .app, then make a .dmg ----
+      # ---------- macOS: embed CLI in .app → .dmg ----------
       - name: Package macOS (.dmg)
         if: matrix.target == 'macos'
         working-directory: app
@@ -82,15 +89,14 @@ jobs:
           set -e
           APP="build/macos/Build/Products/Release/audiobook_studio.app"
           CLI=$(echo build/cli/*/bundle)
-          # The CLI needs the sherpa native libs the app already ships.
           cp "$APP/Contents/Frameworks/"libsherpa-onnx-c-api.dylib "$APP/Contents/Frameworks/"libonnxruntime*.dylib "$CLI/lib/" || true
           mkdir -p "$APP/Contents/Resources/cli"
           cp -R "$CLI/bin" "$CLI/lib" "$APP/Contents/Resources/cli/"
           STAGE=$(mktemp -d); cp -R "$APP" "$STAGE/"; ln -s /Applications "$STAGE/Applications"
           hdiutil create -volname "Audiobook Studio" -srcfolder "$STAGE" -ov -format UDZO AudiobookStudio-macos.dmg
 
-      # ---- Linux: embed CLI in the bundle, then build a .deb ----
-      - name: Package Linux (.deb)
+      # ---------- Linux: embed CLI → .deb, .rpm, .AppImage ----------
+      - name: Package Linux (.deb/.rpm/.AppImage)
         if: matrix.target == 'linux'
         working-directory: app
         run: |
@@ -100,32 +106,28 @@ jobs:
           CLI=$(echo build/cli/*/bundle)
           cp "$BUNDLE/lib/"libsherpa-onnx-c-api.so "$BUNDLE/lib/"libonnxruntime*.so "$CLI/lib/" 2>/dev/null || true
           mkdir -p "$BUNDLE/cli"; cp -R "$CLI/bin" "$CLI/lib" "$BUNDLE/cli/"
+          # staged filesystem root for deb/rpm
           ROOT=$(mktemp -d)
-          install -d "$ROOT/opt/audiobook_studio" "$ROOT/usr/bin" "$ROOT/usr/share/applications" "$ROOT/DEBIAN"
+          install -d "$ROOT/opt/audiobook_studio" "$ROOT/usr/bin" "$ROOT/usr/share/applications" "$ROOT/usr/share/icons/hicolor/512x512/apps"
           cp -R "$BUNDLE/." "$ROOT/opt/audiobook_studio/"
           ln -s /opt/audiobook_studio/audiobook_studio "$ROOT/usr/bin/audiobook_studio"
           ln -s /opt/audiobook_studio/cli/bin/audiobook_studio "$ROOT/usr/bin/audiobook_studio-cli"
-          cat > "$ROOT/usr/share/applications/audiobook_studio.desktop" <<EOF
-          [Desktop Entry]
-          Name=Audiobook Studio
-          Exec=/opt/audiobook_studio/audiobook_studio
-          Icon=audiobook_studio
-          Type=Application
-          Categories=AudioVideo;Audio;
-          EOF
-          cat > "$ROOT/DEBIAN/control" <<EOF
-          Package: audiobook-studio
-          Version: ${VER}
-          Section: sound
-          Priority: optional
-          Architecture: amd64
-          Depends: libgtk-3-0, libstdc++6
-          Maintainer: kodsama <noreply@users.noreply.github.com>
-          Description: Convert EPUB books into chaptered M4B audiobooks (app + CLI).
-          EOF
-          dpkg-deb --build --root-owner-group "$ROOT" AudiobookStudio-linux.deb
+          cp assets/logo.png "$ROOT/usr/share/icons/hicolor/512x512/apps/audiobook_studio.png"
+          printf '%s\n' '[Desktop Entry]' 'Name=Audiobook Studio' 'Exec=/opt/audiobook_studio/audiobook_studio' 'Icon=audiobook_studio' 'Type=Application' 'Categories=AudioVideo;Audio;' > "$ROOT/usr/share/applications/audiobook_studio.desktop"
+          fpm -s dir -t deb -n audiobook-studio -v "$VER" -a amd64 --description "EPUB to M4B audiobook (app + CLI)" --url "https://github.com/${{ github.repository }}" --license GPL-3.0 --depends libgtk-3-0 --depends libstdc++6 -C "$ROOT" -p AudiobookStudio-linux.deb opt usr
+          fpm -s dir -t rpm -n audiobook-studio -v "$VER" -a x86_64 --description "EPUB to M4B audiobook (app + CLI)" --url "https://github.com/${{ github.repository }}" --license GPL-3.0 --depends gtk3 -C "$ROOT" -p AudiobookStudio-linux.rpm opt usr
+          # AppImage
+          APPDIR=$(mktemp -d)/AppDir
+          install -d "$APPDIR/usr" "$APPDIR/usr/share/applications" "$APPDIR/usr/share/icons/hicolor/512x512/apps"
+          cp -R "$BUNDLE/." "$APPDIR/usr/"
+          cp assets/logo.png "$APPDIR/audiobook_studio.png"
+          cp assets/logo.png "$APPDIR/usr/share/icons/hicolor/512x512/apps/audiobook_studio.png"
+          printf '%s\n' '[Desktop Entry]' 'Name=Audiobook Studio' 'Exec=audiobook_studio' 'Icon=audiobook_studio' 'Type=Application' 'Categories=AudioVideo;Audio;' | tee "$APPDIR/audiobook_studio.desktop" > "$APPDIR/usr/share/applications/audiobook_studio.desktop"
+          printf '%s\n' '#!/bin/sh' 'HERE="$(dirname "$(readlink -f "$0")")"' 'exec "$HERE/usr/audiobook_studio" "$@"' > "$APPDIR/AppRun"
+          chmod +x "$APPDIR/AppRun"
+          APPIMAGE_EXTRACT_AND_RUN=1 /tmp/appimagetool "$APPDIR" AudiobookStudio-linux.AppImage
 
-      # ---- Windows: embed CLI, then build an Inno Setup installer ----
+      # ---------- Windows: embed CLI → Inno Setup .exe ----------
       - name: Package Windows (.exe)
         if: matrix.target == 'windows'
         working-directory: app
@@ -165,6 +167,88 @@ jobs:
           GH_TOKEN: ${{ github.token }}
         run: |
           shopt -s nullglob
-          files=(AudiobookStudio-*.dmg AudiobookStudio-*.deb AudiobookStudio-*setup.exe)
+          files=(AudiobookStudio-*.dmg AudiobookStudio-*.deb AudiobookStudio-*.rpm AudiobookStudio-*.AppImage AudiobookStudio-*setup.exe)
           echo "Uploading: ${files[*]}"
           gh release upload "$TAG" "${files[@]}" --clobber --repo "${{ github.repository }}"
+
+  # ---------- Snap (best-effort; classic confinement → host ffmpeg/files) ----------
+  linux-snap:
+    name: Build snap (best-effort)
+    needs: create-release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Deps
+        run: sudo apt-get update && sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config liblzma-dev
+      - name: Build app + CLI
+        working-directory: app
+        run: |
+          flutter build linux --release --obfuscate --split-debug-info=build/symbols/linux
+          dart build cli
+          B="build/linux/x64/release/bundle"; C=$(echo build/cli/*/bundle)
+          cp "$B/lib/"libsherpa-onnx-c-api.so "$B/lib/"libonnxruntime*.so "$C/lib/" 2>/dev/null || true
+          mkdir -p "$B/cli"; cp -R "$C/bin" "$C/lib" "$B/cli/"
+          sed -i "s/^version: .*/version: '${TAG#v}'/" snap/snapcraft.yaml
+      - name: Snapcraft
+        working-directory: app
+        run: |
+          sudo snap install snapcraft --classic
+          snapcraft --destructive-mode
+          mv *.snap AudiobookStudio-linux.snap
+      - name: Upload
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" AudiobookStudio-linux.snap --clobber --repo "${{ github.repository }}"
+
+  # ---------- Flatpak (best-effort; needs sandbox holes + bundled ffmpeg) ----------
+  linux-flatpak:
+    name: Build flatpak (best-effort)
+    needs: create-release
+    runs-on: ubuntu-latest
+    continue-on-error: true
+    env:
+      TAG: ${{ github.event.inputs.tag || github.ref_name }}
+    steps:
+      - uses: actions/checkout@v4
+        with:
+          ref: ${{ github.event.inputs.tag || github.ref_name }}
+      - uses: subosito/flutter-action@v2
+        with:
+          flutter-version: ${{ env.FLUTTER_VERSION }}
+          channel: stable
+          cache: true
+      - name: Deps
+        run: |
+          sudo apt-get update
+          sudo apt-get install -y ninja-build libgtk-3-dev clang cmake pkg-config liblzma-dev flatpak flatpak-builder
+          sudo flatpak remote-add --if-not-exists flathub https://flathub.org/repo/flathub.flatpakrepo
+          sudo flatpak install -y flathub org.freedesktop.Platform//23.08 org.freedesktop.Sdk//23.08 || true
+      - name: Build app + CLI
+        working-directory: app
+        run: |
+          flutter build linux --release --obfuscate --split-debug-info=build/symbols/linux
+          dart build cli
+          B="build/linux/x64/release/bundle"; C=$(echo build/cli/*/bundle)
+          cp "$B/lib/"libsherpa-onnx-c-api.so "$B/lib/"libonnxruntime*.so "$C/lib/" 2>/dev/null || true
+          mkdir -p "$B/cli"; cp -R "$C/bin" "$C/lib" "$B/cli/"
+      - name: flatpak-builder
+        working-directory: app
+        run: |
+          flatpak-builder --user --install-deps-from=flathub --force-clean --repo=repo fp-build flatpak/com.kodsama.AudiobookStudio.yml
+          flatpak build-bundle repo AudiobookStudio-linux.flatpak com.kodsama.AudiobookStudio
+      - name: Upload
+        working-directory: app
+        env:
+          GH_TOKEN: ${{ github.token }}
+        run: gh release upload "$TAG" AudiobookStudio-linux.flatpak --clobber --repo "${{ github.repository }}"

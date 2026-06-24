@@ -1,0 +1,42 @@
+app-id: com.kodsama.AudiobookStudio
+runtime: org.freedesktop.Platform
+runtime-version: '23.08'
+sdk: org.freedesktop.Sdk
+command: audiobook_studio
+finish-args:
+  - --share=network
+  - --share=ipc
+  - --socket=fallback-x11
+  - --socket=wayland
+  - --device=dri
+  - --filesystem=home
+modules:
+  - name: audiobook-studio
+    buildsystem: simple
+    # The app invokes ffmpeg/ffprobe; bundle a static build so it works inside
+    # the flatpak sandbox (no host PATH access).
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - mkdir -p /app/share/audiobook_studio /app/bin
+      - cp -r . /app/share/audiobook_studio/
+      - ln -s /app/share/audiobook_studio/audiobook_studio /app/bin/audiobook_studio
+      - ln -s /app/share/audiobook_studio/cli/bin/audiobook_studio /app/bin/audiobook_studio-cli
+    sources:
+      - type: dir
+        path: build/linux/x64/release/bundle
+  - name: ffmpeg-static
+    buildsystem: simple
+    build-options:
+      build-args:
+        - --share=network
+    build-commands:
+      - tar xf ffmpeg.tar.xz --strip-components=1
+      - install -Dm755 ffmpeg /app/bin/ffmpeg
+      - install -Dm755 ffprobe /app/bin/ffprobe
+    sources:
+      - type: file
+        url: https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
+        dest-filename: ffmpeg.tar.xz
+        # checksum intentionally omitted (rolling static build); best-effort job

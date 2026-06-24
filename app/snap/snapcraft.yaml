@@ -1,0 +1,20 @@
+name: audiobook-studio
+base: core22
+version: '0.0.0' # overwritten from the tag in CI
+summary: EPUB to M4B audiobook converter (app + CLI)
+description: |
+  Convert EPUB books into chaptered M4B audiobooks, with offline local
+  text-to-speech (sherpa-onnx) and cloud engines (OpenAI / ElevenLabs).
+grade: stable
+# Classic confinement: the app shells out to ffmpeg and reads/writes user files,
+# which strict confinement would block. (Classic builds are unsigned/best-effort.)
+confinement: classic
+
+apps:
+  audiobook-studio:
+    command: audiobook_studio
+
+parts:
+  bundle:
+    plugin: dump
+    source: build/linux/x64/release/bundle

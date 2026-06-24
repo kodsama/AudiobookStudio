@@ -97,6 +97,43 @@ key into the options panel.
 
 ---
 
+## Command line (terminal / LLM)
+
+The same engine is usable headless via a Dart CLI — handy for scripts or driving
+from an LLM. It reuses the app's data layer (no Flutter), and local TTS runs in
+pure Dart by loading sherpa-onnx's native library from a `flutter build macos`
+output (auto-detected, or pass `--sherpa-lib`).
+
+```bash
+cd app
+dart run audiobook_studio info book.epub          # metadata + chapters
+dart run audiobook_studio list-models             # engines, sizes, install state
+dart run audiobook_studio download piper          # fetch a local model
+dart run audiobook_studio convert book.epub \
+    --engine local --model piper --speed 1.0 -o out.m4b
+
+# Cloud engine (no local model needed):
+OPENAI_API_KEY=sk-... dart run audiobook_studio convert book.epub --engine openai
+
+# Machine-readable output for scripts / LLMs:
+dart run audiobook_studio convert book.epub --json
+```
+
+`--json` emits one JSON object per line (`log` / `progress` / `done` / `error`),
+so a caller can track progress and the final output path programmatically. Run
+`dart run audiobook_studio --help` for all options.
+
+For a clean, standalone binary (recommended for scripts/LLMs — `dart run` prints
+build-hook noise to stdout), compile it once:
+
+```bash
+dart build cli                                   # → build/cli/<platform>/bundle/bin/audiobook_studio
+build/cli/macos_arm64/bundle/bin/audiobook_studio convert book.epub --json
+```
+
+The local engine loads sherpa-onnx's native library from a `flutter build macos`
+output (auto-detected), or pass `--sherpa-lib <dir>` to point at it explicitly.
+
 ## Development
 
 ```bash

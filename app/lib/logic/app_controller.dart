@@ -100,18 +100,21 @@ class AppController extends ChangeNotifier {
       final stem = p.basenameWithoutExtension(sourcePath);
       final book = parser.parse(bytes, fallbackTitle: stem);
       _book = book;
+      // Probe the environment first so we can pre-select an engine that is
+      // actually usable (local preferred over cloud).
+      await checkDeps();
+      final backend = preferredBackend();
       final dir = p.dirname(sourcePath);
       final safe = _safeName(book.title);
       _options = ConversionOptions.defaults(
         book,
         outputPath: p.join(dir, '$safe.m4b'),
         workDir: p.join(dir, '$safe.work'),
-        voiceId: VoiceCatalog.defaultVoiceId(
-            TtsBackendKind.piper, book.languageCode),
-      );
-      log.info('Loaded "${book.title}" — ${book.chapters.length} chapters');
+        voiceId: VoiceCatalog.defaultVoiceId(backend, book.languageCode),
+      ).copyWith(backend: backend);
+      log.info('Loaded "${book.title}" — ${book.chapters.length} chapters '
+          '· engine: ${backend.label}');
       notifyListeners();
-      await checkDeps();
     } on Object catch (e) {
       _parseError = e.toString();
       log.error('Failed to parse EPUB: $e');
@@ -214,9 +217,26 @@ class AppController extends ChangeNotifier {
   /// A short reason an unavailable [backend] can't be selected, for the UI.
   String unavailableReason(TtsBackendKind backend) => switch (backend) {
         TtsBackendKind.piper => 'install piper',
-        TtsBackendKind.kokoro => 'needs Kokoro model',
+        TtsBackendKind.kokoro => 'coming soon',
         _ => 'unavailable',
       };
+
+  /// Engine preference order: local engines first (free, offline), then cloud.
+  static const List<TtsBackendKind> _backendPreference = [
+    TtsBackendKind.piper,
+    TtsBackendKind.kokoro,
+    TtsBackendKind.openai,
+    TtsBackendKind.elevenlabs,
+  ];
+
+  /// The best engine to pre-select: the first *available* one in preference
+  /// order (local before cloud), falling back to OpenAI if none are ready.
+  TtsBackendKind preferredBackend() {
+    for (final k in _backendPreference) {
+      if (backendAvailable(k)) return k;
+    }
+    return TtsBackendKind.openai;
+  }
 
   /// Whether the *currently selected* engine can actually run: it is available
   /// and, for cloud engines, an API key is set.

@@ -89,6 +89,26 @@ void main() {
     expect(c.missingRequired, isEmpty);
   });
 
+  test('preferredBackend favours an available local engine', () async {
+    final c = controllerWith({'ffmpeg', 'ffprobe', 'piper'});
+    await c.checkDeps();
+    expect(c.preferredBackend(), TtsBackendKind.piper);
+  });
+
+  test('preferredBackend falls back to cloud when no local engine is ready',
+      () async {
+    final c = controllerWith({'ffmpeg', 'ffprobe'}); // no piper, no kokoro
+    await c.checkDeps();
+    expect(c.preferredBackend(), TtsBackendKind.openai);
+  });
+
+  test('loadBook pre-selects a usable engine, not an unavailable one', () async {
+    final c = controllerWith({'ffmpeg', 'ffprobe'}); // piper unavailable
+    await c.loadBook(_fixture(), '/books/t.epub');
+    expect(c.options!.backend, TtsBackendKind.openai); // not the unusable Piper
+    expect(c.backendAvailable(c.options!.backend), isTrue);
+  });
+
   test('a failed start surfaces as an error in the progress view', () async {
     final c = controllerWith({'ffmpeg', 'ffprobe', 'espeak-ng'});
     await c.loadBook(_fixture(), '/books/t.epub');

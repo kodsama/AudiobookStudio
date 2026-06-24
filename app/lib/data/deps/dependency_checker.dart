@@ -60,7 +60,7 @@ class DependencyChecker {
       return DependencyStatus(
         kind: kind,
         found: false,
-        installHint: 'Downloaded in-app',
+        installHint: _downloadHint(kind),
       );
     }
     final locator = os == HostOs.windows ? 'where' : 'which';
@@ -80,6 +80,13 @@ class DependencyChecker {
       version: await _version(bin),
     );
   }
+
+  /// Honest status text for a downloadable (non-binary) dependency.
+  String _downloadHint(DependencyKind kind) => switch (kind) {
+        DependencyKind.kokoroModel => 'Kokoro support is in progress',
+        DependencyKind.piperVoice => 'Comes with the Piper voice',
+        _ => 'Fetched automatically',
+      };
 
   /// Best-effort version string from `<bin> -version` (first line).
   Future<String?> _version(String bin) async {

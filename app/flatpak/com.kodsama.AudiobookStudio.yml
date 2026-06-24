@@ -40,4 +40,5 @@ modules:
       - type: file
         url: https://johnvansickle.com/ffmpeg/releases/ffmpeg-release-amd64-static.tar.xz
         dest-filename: ffmpeg.tar.xz
-        # checksum intentionally omitted (rolling static build); best-effort job
+        # Rolling "release" build — bump this sha256 when upstream ffmpeg updates.
+        sha256: abda8d77ce8309141f83ab8edf0596834087c52467f6badf376a6a2a4c87cf67

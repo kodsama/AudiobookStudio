@@ -196,7 +196,8 @@ jobs:
         working-directory: app
         shell: pwsh
         run: |
-          dotnet tool install --global wix
+          # WiX 5 — v6/v7 gate behind the Open Source Maintenance Fee EULA (WIX7015).
+          dotnet tool install --global wix --version 5.0.2
           $env:PATH += ";$env:USERPROFILE\.dotnet\tools"
           $ver = "${env:TAG}".TrimStart('v')
           @"

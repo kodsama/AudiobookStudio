@@ -52,16 +52,28 @@ class SherpaModelInstaller {
   bool isInstalled(SherpaModel model) =>
       model.voices.every(isVoiceInstalled);
 
-  /// Downloads + extracts every missing voice of [model], streaming progress.
-  Stream<String> ensureInstalled(SherpaModel model) async* {
+  /// Downloads + extracts every missing voice of [model], streaming log lines.
+  /// [onProgress] reports overall completion (0–1) across all of the model's
+  /// voices as bytes arrive.
+  Stream<String> ensureInstalled(
+    SherpaModel model, {
+    void Function(double fraction)? onProgress,
+  }) async* {
     Directory(root).createSync(recursive: true);
-    for (final voice in model.voices) {
+    final total = model.voices.length;
+    for (var i = 0; i < model.voices.length; i++) {
+      final voice = model.voices[i];
       final langs = voice.languages.map((l) => l.toUpperCase()).join('/');
+      // Map a single voice's [0,1] download onto the overall bar.
+      void report(double f) => onProgress?.call((i + f) / total);
       if (File(modelPath(voice)).existsSync()) {
         yield '${model.label} ($langs) already installed.';
+        report(1);
       } else {
         yield 'Downloading ${model.label} ($langs, ~${voice.sizeMb} MB)…';
-        _extractTarBz2(await _download(voice.archiveUrl), root);
+        final bytes = await _download(voice.archiveUrl, onProgress: report);
+        yield 'Extracting ${model.label} ($langs)…';
+        _extractTarBz2(bytes, root);
         yield '${model.label} ($langs) installed.';
       }
       if (voice.vocoderFile.isNotEmpty &&
@@ -71,6 +83,7 @@ class SherpaModelInstaller {
         yield 'Vocoder installed.';
       }
     }
+    onProgress?.call(1);
     yield '${model.label} is ready.';
   }
 
@@ -86,11 +99,37 @@ class SherpaModelInstaller {
     }
   }
 
-  Future<Uint8List> _download(String url) async {
-    final resp = await client.get(Uri.parse(url));
-    if (resp.statusCode != 200) {
-      throw HttpException('Download failed (${resp.statusCode}): $url');
+  /// Streams a download with byte-level [onProgress] (0–1) and retries on
+  /// transient network failures (GitHub's release CDN drops connections under
+  /// load, especially for large files).
+  Future<Uint8List> _download(
+    String url, {
+    void Function(double fraction)? onProgress,
+    int maxAttempts = 4,
+  }) async {
+    Object? lastError;
+    for (var attempt = 1; attempt <= maxAttempts; attempt++) {
+      try {
+        final resp = await client.send(http.Request('GET', Uri.parse(url)));
+        if (resp.statusCode != 200) {
+          throw HttpException('HTTP ${resp.statusCode} for $url');
+        }
+        final total = resp.contentLength ?? 0;
+        final builder = BytesBuilder(copy: false);
+        var received = 0;
+        await for (final chunk in resp.stream) {
+          builder.add(chunk);
+          received += chunk.length;
+          if (total > 0) onProgress?.call(received / total);
+        }
+        return builder.toBytes();
+      } on Object catch (e) {
+        lastError = e;
+        if (attempt < maxAttempts) {
+          await Future<void>.delayed(Duration(seconds: attempt * 2));
+        }
+      }
     }
-    return resp.bodyBytes;
+    throw HttpException('Download failed after $maxAttempts attempts: $lastError');
   }
 }

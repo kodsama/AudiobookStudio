@@ -26,7 +26,16 @@ String estimateLabel(int chars) {
 /// per-chapter include/exclude checklist.
 class FilePickerCard extends StatelessWidget {
   final AppController controller;
-  const FilePickerCard({super.key, required this.controller});
+  final bool expanded;
+  final VoidCallback? onToggle;
+  final bool done;
+  const FilePickerCard({
+    super.key,
+    required this.controller,
+    this.expanded = true,
+    this.onToggle,
+    this.done = false,
+  });
 
   Future<void> _pick() async {
     try {
@@ -54,6 +63,9 @@ class FilePickerCard extends StatelessWidget {
           ? 'A DRM-free EPUB file'
           : 'Install the required tools first',
       dimmed: !controller.coreToolsReady,
+      expanded: expanded,
+      onToggle: onToggle,
+      done: done,
       trailing: book == null
           ? null
           : const StatusPill('Loaded', icon: Icons.check_rounded),

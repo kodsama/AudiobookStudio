@@ -13,7 +13,16 @@ import 'section_card.dart';
 /// required vs optional, and offers to install missing system packages.
 class DependencyCard extends StatelessWidget {
   final AppController controller;
-  const DependencyCard({super.key, required this.controller});
+  final bool expanded;
+  final VoidCallback? onToggle;
+  final bool done;
+  const DependencyCard({
+    super.key,
+    required this.controller,
+    this.expanded = true,
+    this.onToggle,
+    this.done = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -30,6 +39,9 @@ class DependencyCard extends StatelessWidget {
       step: 1,
       title: 'Check your toolkit',
       subtitle: 'Required tools must be installed; optional ones can be skipped',
+      expanded: expanded,
+      onToggle: onToggle,
+      done: done,
       trailing: !controller.depsChecked
           ? null
           : !coreReady
@@ -176,17 +188,37 @@ class _ModelRow extends StatelessWidget {
           const SizedBox(width: 10),
           if (installed)
             const StatusPill('installed', icon: Icons.check_rounded)
+          else if (downloading)
+            SizedBox(
+              width: 130,
+              child: Column(
+                crossAxisAlignment: CrossAxisAlignment.end,
+                mainAxisSize: MainAxisSize.min,
+                children: [
+                  Text('${(controller.downloadProgress * 100).round()}%',
+                      style: text.bodySmall
+                          ?.copyWith(color: AppTokens.amberBright)),
+                  const SizedBox(height: 4),
+                  ClipRRect(
+                    borderRadius: BorderRadius.circular(999),
+                    child: LinearProgressIndicator(
+                      value: controller.downloadProgress > 0
+                          ? controller.downloadProgress
+                          : null,
+                      minHeight: 6,
+                      backgroundColor: AppTokens.surfaceHigh,
+                      valueColor:
+                          const AlwaysStoppedAnimation(AppTokens.amber),
+                    ),
+                  ),
+                ],
+              ),
+            )
           else
             OutlinedButton.icon(
               onPressed: busy ? null : () => controller.downloadModel(model),
-              icon: downloading
-                  ? const SizedBox(
-                      width: 14,
-                      height: 14,
-                      child: CircularProgressIndicator(
-                          strokeWidth: 2, color: AppTokens.amber))
-                  : const Icon(Icons.download_rounded, size: 15),
-              label: Text(downloading ? 'Downloading…' : 'Install'),
+              icon: const Icon(Icons.download_rounded, size: 15),
+              label: const Text('Install'),
             ),
         ],
       ),

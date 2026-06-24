@@ -1,5 +1,8 @@
-/// The single-window home screen composing the stepped conversion flow.
+/// The single-window home screen: a stepped, collapsible walkthrough plus a
+/// floating activity-log button.
 library;
+
+import 'dart:async';
 
 import 'package:flutter/material.dart';
 
@@ -11,50 +14,217 @@ import 'widgets/file_picker_card.dart';
 import 'widgets/log_console.dart';
 import 'widgets/options_panel.dart';
 import 'widgets/progress_view.dart';
-import 'widgets/section_card.dart';
 
-/// Top-level screen. Rebuilds reactively from [AppController] and lays the
-/// steps out in a centered, scrollable column.
-class HomeScreen extends StatelessWidget {
+/// Top-level screen. Shows the five steps as an accordion (one expanded at a
+/// time, auto-advancing as the workflow progresses) and a bottom-right log FAB.
+class HomeScreen extends StatefulWidget {
   final AppController controller;
   const HomeScreen({super.key, required this.controller});
+
+  @override
+  State<HomeScreen> createState() => _HomeScreenState();
+}
+
+class _HomeScreenState extends State<HomeScreen> {
+  AppController get _c => widget.controller;
+
+  /// Currently expanded step (0 = none).
+  late int _expanded = _c.currentStep;
+  int _lastStep = 0;
+
+  bool _logOpen = false;
+  int _unread = 0;
+  StreamSubscription? _logSub;
+
+  @override
+  void initState() {
+    super.initState();
+    _lastStep = _c.currentStep;
+    _logSub = _c.log.lines.listen((_) {
+      if (!_logOpen && mounted) setState(() => _unread++);
+    });
+  }
+
+  @override
+  void dispose() {
+    _logSub?.cancel();
+    super.dispose();
+  }
+
+  void _toggle(int step) =>
+      setState(() => _expanded = _expanded == step ? 0 : step);
+
+  void _toggleLog() => setState(() {
+        _logOpen = !_logOpen;
+        if (_logOpen) _unread = 0;
+      });
 
   @override
   Widget build(BuildContext context) {
     return Scaffold(
       body: ListenableBuilder(
-        listenable: controller,
+        listenable: _c,
         builder: (context, _) {
-          return Center(
-            child: ConstrainedBox(
-              constraints: const BoxConstraints(maxWidth: 760),
-              child: ListView(
-                padding: const EdgeInsets.symmetric(
-                    horizontal: 28, vertical: 36),
-                children: [
-                  const _Header(),
-                  const SizedBox(height: 28),
-                  DependencyCard(controller: controller),
-                  const SizedBox(height: 16),
-                  FilePickerCard(controller: controller),
-                  const SizedBox(height: 16),
-                  OptionsPanel(controller: controller),
-                  const SizedBox(height: 16),
-                  ConvertBar(controller: controller),
-                  const SizedBox(height: 16),
-                  ProgressView(progress: controller.progress),
-                  const SizedBox(height: 16),
-                  SectionCard(
-                    step: 6,
-                    title: 'Activity log',
-                    child: LogConsole(log: controller.log),
+          // Auto-advance the open step as the workflow progresses.
+          final current = _c.currentStep;
+          if (current != _lastStep) {
+            _lastStep = current;
+            WidgetsBinding.instance.addPostFrameCallback((_) {
+              if (mounted) setState(() => _expanded = current);
+            });
+          }
+
+          Widget step(int n, Widget Function(bool expanded, VoidCallback toggle) build) =>
+              Padding(
+                padding: const EdgeInsets.only(bottom: 12),
+                child: build(_expanded == n, () => _toggle(n)),
+              );
+
+          return Stack(
+            children: [
+              Positioned.fill(
+                child: Center(
+                  child: ConstrainedBox(
+                    constraints: const BoxConstraints(maxWidth: 760),
+                    child: ListView(
+                      padding: const EdgeInsets.fromLTRB(28, 36, 28, 96),
+                      children: [
+                        const _Header(),
+                        const SizedBox(height: 24),
+                        step(
+                            1,
+                            (e, t) => DependencyCard(
+                                controller: _c,
+                                expanded: e,
+                                onToggle: t,
+                                done: current > 1)),
+                        step(
+                            2,
+                            (e, t) => FilePickerCard(
+                                controller: _c,
+                                expanded: e,
+                                onToggle: t,
+                                done: current > 2)),
+                        step(
+                            3,
+                            (e, t) => OptionsPanel(
+                                controller: _c,
+                                expanded: e,
+                                onToggle: t,
+                                done: current > 3)),
+                        step(
+                            4,
+                            (e, t) => ConvertBar(
+                                controller: _c,
+                                expanded: e,
+                                onToggle: t,
+                                done: current > 4)),
+                        step(
+                            5,
+                            (e, t) => ProgressView(
+                                progress: _c.progress,
+                                expanded: e,
+                                onToggle: t)),
+                      ],
+                    ),
                   ),
-                  const SizedBox(height: 40),
-                ],
+                ),
               ),
-            ),
+              if (_logOpen) ...[
+                Positioned.fill(
+                  child: GestureDetector(
+                    onTap: _toggleLog,
+                    child: Container(color: Colors.black.withValues(alpha: 0.35)),
+                  ),
+                ),
+                Positioned(
+                  right: 24,
+                  bottom: 88,
+                  child: _LogPanel(controller: _c),
+                ),
+              ],
+              Positioned(
+                right: 24,
+                bottom: 24,
+                child: _LogFab(unread: _unread, open: _logOpen, onTap: _toggleLog),
+              ),
+            ],
           );
         },
+      ),
+    );
+  }
+}
+
+/// The bottom-right activity-log button with an unread badge.
+class _LogFab extends StatelessWidget {
+  final int unread;
+  final bool open;
+  final VoidCallback onTap;
+  const _LogFab({required this.unread, required this.open, required this.onTap});
+
+  @override
+  Widget build(BuildContext context) {
+    return Stack(
+      clipBehavior: Clip.none,
+      children: [
+        FloatingActionButton(
+          onPressed: onTap,
+          backgroundColor: open ? AppTokens.surfaceHigh : AppTokens.amber,
+          foregroundColor: open ? AppTokens.cream : AppTokens.ink,
+          child: Icon(open ? Icons.close_rounded : Icons.terminal_rounded),
+        ),
+        if (unread > 0 && !open)
+          Positioned(
+            right: -2,
+            top: -2,
+            child: Container(
+              padding: const EdgeInsets.symmetric(horizontal: 6, vertical: 2),
+              decoration: BoxDecoration(
+                color: AppTokens.rust,
+                borderRadius: BorderRadius.circular(999),
+                border: Border.all(color: AppTokens.ink, width: 2),
+              ),
+              constraints: const BoxConstraints(minWidth: 20),
+              child: Text(
+                unread > 99 ? '99+' : '$unread',
+                textAlign: TextAlign.center,
+                style: const TextStyle(
+                    color: AppTokens.cream,
+                    fontSize: 11,
+                    fontWeight: FontWeight.w700),
+              ),
+            ),
+          ),
+      ],
+    );
+  }
+}
+
+/// The floating log panel shown when the FAB is open.
+class _LogPanel extends StatelessWidget {
+  final AppController controller;
+  const _LogPanel({required this.controller});
+
+  @override
+  Widget build(BuildContext context) {
+    return Material(
+      color: Colors.transparent,
+      child: Container(
+        width: 460,
+        padding: const EdgeInsets.all(16),
+        decoration: BoxDecoration(
+          color: AppTokens.surface,
+          borderRadius: BorderRadius.circular(AppTokens.radius),
+          border: Border.all(color: AppTokens.line),
+          boxShadow: [
+            BoxShadow(
+                color: Colors.black.withValues(alpha: 0.4),
+                blurRadius: 30,
+                offset: const Offset(0, 10)),
+          ],
+        ),
+        child: LogConsole(log: controller.log),
       ),
     );
   }
@@ -67,40 +237,35 @@ class _Header extends StatelessWidget {
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
-    return Column(
-      crossAxisAlignment: CrossAxisAlignment.start,
+    return Row(
       children: [
-        Row(
-          children: [
-            Container(
-              padding: const EdgeInsets.all(10),
-              decoration: BoxDecoration(
-                gradient: const LinearGradient(
-                  colors: [AppTokens.amberBright, AppTokens.amber],
-                  begin: Alignment.topLeft,
-                  end: Alignment.bottomRight,
-                ),
-                borderRadius: BorderRadius.circular(14),
-                boxShadow: [
-                  BoxShadow(
-                    color: AppTokens.amber.withValues(alpha: 0.35),
-                    blurRadius: 24,
-                    spreadRadius: 1,
-                  ),
-                ],
+        Container(
+          padding: const EdgeInsets.all(10),
+          decoration: BoxDecoration(
+            gradient: const LinearGradient(
+              colors: [AppTokens.amberBright, AppTokens.amber],
+              begin: Alignment.topLeft,
+              end: Alignment.bottomRight,
+            ),
+            borderRadius: BorderRadius.circular(14),
+            boxShadow: [
+              BoxShadow(
+                color: AppTokens.amber.withValues(alpha: 0.35),
+                blurRadius: 24,
+                spreadRadius: 1,
               ),
-              child: const Icon(Icons.auto_stories_rounded,
-                  color: AppTokens.ink, size: 26),
-            ),
-            const SizedBox(width: 16),
-            Column(
-              crossAxisAlignment: CrossAxisAlignment.start,
-              children: [
-                Text('Audiobook Studio', style: text.displaySmall),
-                Text('Turn any EPUB into a chaptered audiobook',
-                    style: text.bodySmall),
-              ],
-            ),
+            ],
+          ),
+          child: const Icon(Icons.auto_stories_rounded,
+              color: AppTokens.ink, size: 26),
+        ),
+        const SizedBox(width: 16),
+        Column(
+          crossAxisAlignment: CrossAxisAlignment.start,
+          children: [
+            Text('Audiobook Studio', style: text.displaySmall),
+            Text('Turn any EPUB into a chaptered audiobook',
+                style: text.bodySmall),
           ],
         ),
       ],

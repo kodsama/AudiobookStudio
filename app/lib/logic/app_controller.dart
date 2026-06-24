@@ -242,9 +242,13 @@ class AppController extends ChangeNotifier {
   bool isModelInstalled(SherpaModel model) => sherpaInstaller.isInstalled(model);
 
   String? _downloadingModelId;
+  double _downloadProgress = 0;
 
   /// The id of the model currently downloading, or null.
   String? get downloadingModelId => _downloadingModelId;
+
+  /// Download completion (0–1) of the model currently downloading.
+  double get downloadProgress => _downloadProgress;
 
   /// Downloads the selected local model (used by the options-panel button).
   Future<void> setupModel() async {
@@ -257,9 +261,17 @@ class AppController extends ChangeNotifier {
   Future<void> downloadModel(SherpaModel model) async {
     if (_downloadingModelId != null) return;
     _downloadingModelId = model.id;
+    _downloadProgress = 0;
     notifyListeners();
     try {
-      await for (final line in sherpaInstaller.ensureInstalled(model)) {
+      final stream = sherpaInstaller.ensureInstalled(model, onProgress: (f) {
+        // Throttle to ~1% steps to avoid excessive rebuilds.
+        if (f - _downloadProgress >= 0.01 || f >= 1.0) {
+          _downloadProgress = f;
+          notifyListeners();
+        }
+      });
+      await for (final line in stream) {
         log.info(line);
       }
       final o = _options;
@@ -270,6 +282,7 @@ class AppController extends ChangeNotifier {
       log.error('Model download failed: $e');
     } finally {
       _downloadingModelId = null;
+      _downloadProgress = 0;
       await checkDeps();
       notifyListeners();
     }
@@ -335,6 +348,20 @@ class AppController extends ChangeNotifier {
       log.error('Conversion could not start: $e');
       conversion.markError('Could not start: $e');
     }
+  }
+
+  /// The step the walkthrough should focus on (1-based):
+  /// 1 toolkit · 2 choose book · 3 tune · 4 convert · 5 progress.
+  int get currentStep {
+    if (!coreToolsReady) return 1;
+    if (_book == null) return 2;
+    if (isConverting ||
+        progress.phase == ConvPhase.done ||
+        progress.phase == ConvPhase.error) {
+      return 5;
+    }
+    if (canConvert) return 4;
+    return 3;
   }
 
   /// Requests cancellation of an in-flight run.

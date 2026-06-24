@@ -23,6 +23,16 @@ class SectionCard extends StatelessWidget {
   /// Whether the step is visually de-emphasized (not yet reachable).
   final bool dimmed;
 
+  /// Whether the body is shown. When false, only the header renders and a
+  /// chevron points right; tapping the header calls [onToggle].
+  final bool expanded;
+
+  /// Called when the header is tapped (to expand/collapse). Null = not tappable.
+  final VoidCallback? onToggle;
+
+  /// Whether this step is already completed (shows a check on the chip).
+  final bool done;
+
   /// Card body.
   final Widget child;
 
@@ -34,11 +44,45 @@ class SectionCard extends StatelessWidget {
     this.subtitle,
     this.trailing,
     this.dimmed = false,
+    this.expanded = true,
+    this.onToggle,
+    this.done = false,
   });
 
   @override
   Widget build(BuildContext context) {
     final text = Theme.of(context).textTheme;
+    final header = Row(
+      crossAxisAlignment: CrossAxisAlignment.center,
+      children: [
+        _StepChip(step, done: done),
+        const SizedBox(width: 14),
+        Expanded(
+          child: Column(
+            crossAxisAlignment: CrossAxisAlignment.start,
+            children: [
+              Text(title, style: text.titleLarge),
+              if (subtitle != null) ...[
+                const SizedBox(height: 2),
+                Text(subtitle!, style: text.bodySmall),
+              ],
+            ],
+          ),
+        ),
+        ?trailing,
+        if (onToggle != null)
+          Padding(
+            padding: const EdgeInsets.only(left: 8),
+            child: AnimatedRotation(
+              turns: expanded ? 0.25 : 0,
+              duration: const Duration(milliseconds: 150),
+              child: const Icon(Icons.chevron_right_rounded,
+                  color: AppTokens.muted),
+            ),
+          ),
+      ],
+    );
+
     return IgnorePointer(
       ignoring: dimmed,
       child: Opacity(
@@ -49,28 +93,24 @@ class SectionCard extends StatelessWidget {
             child: Column(
               crossAxisAlignment: CrossAxisAlignment.start,
               children: [
-                Row(
-                  crossAxisAlignment: CrossAxisAlignment.start,
-                  children: [
-                    _StepChip(step),
-                    const SizedBox(width: 14),
-                    Expanded(
-                      child: Column(
-                        crossAxisAlignment: CrossAxisAlignment.start,
-                        children: [
-                          Text(title, style: text.titleLarge),
-                          if (subtitle != null) ...[
-                            const SizedBox(height: 2),
-                            Text(subtitle!, style: text.bodySmall),
-                          ],
-                        ],
+                onToggle == null
+                    ? header
+                    : InkWell(
+                        onTap: onToggle,
+                        borderRadius: BorderRadius.circular(8),
+                        child: header,
                       ),
-                    ),
-                    ?trailing,
-                  ],
+                AnimatedCrossFade(
+                  firstChild: const SizedBox(width: double.infinity),
+                  secondChild: Padding(
+                    padding: const EdgeInsets.only(top: 18),
+                    child: child,
+                  ),
+                  crossFadeState: expanded
+                      ? CrossFadeState.showSecond
+                      : CrossFadeState.showFirst,
+                  duration: const Duration(milliseconds: 180),
                 ),
-                const SizedBox(height: 18),
-                child,
               ],
             ),
           ),
@@ -82,27 +122,31 @@ class SectionCard extends StatelessWidget {
 
 class _StepChip extends StatelessWidget {
   final int step;
-  const _StepChip(this.step);
+  final bool done;
+  const _StepChip(this.step, {this.done = false});
 
   @override
   Widget build(BuildContext context) {
+    final color = done ? AppTokens.sage : AppTokens.amber;
     return Container(
       width: 30,
       height: 30,
       alignment: Alignment.center,
       decoration: BoxDecoration(
-        color: AppTokens.amber.withValues(alpha: 0.14),
+        color: color.withValues(alpha: 0.14),
         shape: BoxShape.circle,
-        border: Border.all(color: AppTokens.amber.withValues(alpha: 0.5)),
+        border: Border.all(color: color.withValues(alpha: 0.5)),
       ),
-      child: Text(
-        '$step',
-        style: const TextStyle(
-          color: AppTokens.amberBright,
-          fontWeight: FontWeight.w700,
-          fontSize: 14,
-        ),
-      ),
+      child: done
+          ? const Icon(Icons.check_rounded, size: 16, color: AppTokens.sage)
+          : Text(
+              '$step',
+              style: const TextStyle(
+                color: AppTokens.amberBright,
+                fontWeight: FontWeight.w700,
+                fontSize: 14,
+              ),
+            ),
     );
   }
 }

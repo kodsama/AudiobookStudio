@@ -17,7 +17,16 @@ import 'section_card.dart';
 /// can be overridden or left to the EPUB's embedded image.
 class OptionsPanel extends StatelessWidget {
   final AppController controller;
-  const OptionsPanel({super.key, required this.controller});
+  final bool expanded;
+  final VoidCallback? onToggle;
+  final bool done;
+  const OptionsPanel({
+    super.key,
+    required this.controller,
+    this.expanded = true,
+    this.onToggle,
+    this.done = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -27,6 +36,9 @@ class OptionsPanel extends StatelessWidget {
       title: 'Tune the narration',
       subtitle: 'Engine, voice, and output',
       dimmed: o == null,
+      expanded: expanded,
+      onToggle: onToggle,
+      done: done,
       child: o == null
           ? const Text('Load a book first.',
               style: TextStyle(color: AppTokens.muted))
@@ -179,7 +191,7 @@ class _ModelSetup extends StatelessWidget {
                         strokeWidth: 2, color: AppTokens.ink))
                 : const Icon(Icons.download_rounded, size: 18),
             label: Text(installing
-                ? 'Downloading…'
+                ? 'Downloading… ${(controller.downloadProgress * 100).round()}%'
                 : 'Download ${model?.label ?? 'model'}'),
           ),
           const SizedBox(width: 12),

@@ -12,7 +12,16 @@ import 'section_card.dart';
 /// swaps to a Cancel button while a run is in flight.
 class ConvertBar extends StatelessWidget {
   final AppController controller;
-  const ConvertBar({super.key, required this.controller});
+  final bool expanded;
+  final VoidCallback? onToggle;
+  final bool done;
+  const ConvertBar({
+    super.key,
+    required this.controller,
+    this.expanded = true,
+    this.onToggle,
+    this.done = false,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -21,6 +30,9 @@ class ConvertBar extends StatelessWidget {
       step: 4,
       title: 'Create the audiobook',
       dimmed: controller.book == null,
+      expanded: expanded,
+      onToggle: onToggle,
+      done: done,
       child: Row(
         children: [
           if (converting)

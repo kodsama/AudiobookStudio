@@ -11,7 +11,14 @@ import 'section_card.dart';
 /// with its own mini bar and status icon.
 class ProgressView extends StatelessWidget {
   final ConversionProgress progress;
-  const ProgressView({super.key, required this.progress});
+  final bool expanded;
+  final VoidCallback? onToggle;
+  const ProgressView({
+    super.key,
+    required this.progress,
+    this.expanded = true,
+    this.onToggle,
+  });
 
   @override
   Widget build(BuildContext context) {
@@ -21,6 +28,8 @@ class ProgressView extends StatelessWidget {
       step: 5,
       title: 'Conversion progress',
       subtitle: progress.message,
+      expanded: expanded,
+      onToggle: onToggle,
       trailing: _phasePill(progress.phase),
       child: Column(
         crossAxisAlignment: CrossAxisAlignment.start,

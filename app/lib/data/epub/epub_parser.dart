@@ -78,12 +78,17 @@ class EpubParser {
     );
   }
 
-  /// First `h1`/`h2`/`h3` text in the document, if any.
+  /// First `h1`/`h2`/`h3` text in the document, if any. Joins the heading's
+  /// direct child nodes with spaces so adjacent inline elements (e.g. a chapter
+  /// number `<span>1</span>` followed by `<span>Les …</span>`) don't get glued
+  /// into "1Les …"; whitespace is then collapsed.
   String? _titleOf(String xhtml) {
     final doc = html_parser.parse(xhtml);
     final heading = doc.querySelector('h1, h2, h3');
-    final t = heading?.text.trim();
-    return (t == null || t.isEmpty) ? null : t;
+    if (heading == null) return null;
+    final raw = heading.nodes.map((n) => n.text ?? '').join(' ');
+    final t = raw.replaceAll(RegExp(r'\s+'), ' ').trim();
+    return t.isEmpty ? null : t;
   }
 
   String? _readString(Archive archive, String path) {

@@ -26,6 +26,7 @@ import '../domain/book.dart';
 import '../domain/conversion_options.dart';
 import '../domain/dependency.dart';
 import '../domain/progress.dart';
+import '../util/filename.dart';
 import 'conversion_controller.dart';
 import 'log_controller.dart';
 
@@ -381,11 +382,11 @@ class AppController extends ChangeNotifier {
   /// Requests cancellation of an in-flight run.
   void cancel() => conversion.cancel();
 
-  /// Filesystem-safe file stem from a book title.
-  String _safeName(String title) {
-    final cleaned = title.replaceAll(RegExp(r'[^\w\- ]+'), '').trim();
-    return cleaned.isEmpty ? 'audiobook' : cleaned;
-  }
+  /// Filesystem-safe file stem from a book title. Keeps accents, apostrophes and
+  /// other normal characters — only strips characters illegal in file names
+  /// (the old `[^\w\- ]` form deleted é/è/à and apostrophes, e.g. turning
+  /// "L'élégance" into "Llgance").
+  String _safeName(String title) => safeFileStem(title);
 
   @override
   void dispose() {

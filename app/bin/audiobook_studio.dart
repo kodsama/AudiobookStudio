@@ -27,6 +27,7 @@ import 'package:audiobook_studio/data/tts/sherpa_tts_backend.dart';
 import 'package:audiobook_studio/data/text/text_chunker.dart';
 import 'package:audiobook_studio/domain/book.dart';
 import 'package:audiobook_studio/domain/conversion_options.dart';
+import 'package:audiobook_studio/util/filename.dart';
 
 const _usage = '''
 Audiobook Studio — convert an EPUB to a chaptered .m4b audiobook.
@@ -318,8 +319,8 @@ Future<({String output, int chapters})> _runConvertJob({
   }
 
   final dir = p.dirname(p.absolute(path));
-  final safe = book.title.replaceAll(RegExp(r'[^\w\- ]+'), '').trim();
-  final out = output ?? p.join(dir, '${safe.isEmpty ? 'audiobook' : safe}.m4b');
+  final safe = safeFileStem(book.title);
+  final out = output ?? p.join(dir, '$safe.m4b');
   final selected = chapters != null
       ? chapters.split(',').map((s) => int.parse(s.trim())).toSet()
       : book.chapters.map((c) => c.index).toSet();
@@ -710,6 +711,10 @@ class _CliError implements Exception {
 
 /// Tiny flag/option parser: `--key value`, `--flag`, and positionals.
 class _Args {
+  /// Value-less switches: they must never consume the following token (so
+  /// `info --json book.epub` keeps `book.epub` as a positional).
+  static const _knownFlags = {'json', 'help', 'h'};
+
   final List<String> positionals = [];
   final Map<String, String> _opts = {};
   final Set<String> _flags = {};
@@ -719,7 +724,9 @@ class _Args {
       final a = argv[i];
       if (a.startsWith('-')) {
         final key = a.replaceFirst(RegExp(r'^-+'), '');
-        if (i + 1 < argv.length && !argv[i + 1].startsWith('-')) {
+        if (!_knownFlags.contains(key) &&
+            i + 1 < argv.length &&
+            !argv[i + 1].startsWith('-')) {
           _opts[key] = argv[++i];
         } else {
           _flags.add(key);

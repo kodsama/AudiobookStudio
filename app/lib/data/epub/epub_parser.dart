@@ -57,7 +57,12 @@ class EpubParser {
       if (text.length < minChapterChars) continue;
       chapters.add(Chapter(
         index: chapters.length,
-        title: _titleOf(xhtml) ?? 'Chapter ${chapters.length + 1}',
+        // Prefer the book's own table-of-contents title (covers headingless
+        // front/back matter), then the first in-document heading, then a
+        // generic label as a last resort.
+        title: opf.tocTitles[href] ??
+            _titleOf(xhtml) ??
+            'Chapter ${chapters.length + 1}',
         text: text,
       ));
     }

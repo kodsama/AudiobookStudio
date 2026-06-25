@@ -77,13 +77,17 @@ class _HomeScreenState extends State<HomeScreen> {
       body: ListenableBuilder(
         listenable: _c,
         builder: (context, _) {
-          // Auto-advance the open step as the workflow progresses.
+          // Don't auto-collapse the step the user is on: let them advance via
+          // the Continue button or by tapping a section header. The one
+          // exception is jumping to the live progress when a run starts.
           final current = _c.currentStep;
           if (current != _lastStep) {
             _lastStep = current;
-            WidgetsBinding.instance.addPostFrameCallback((_) {
-              if (mounted) setState(() => _expanded = current);
-            });
+            if (current == 5) {
+              WidgetsBinding.instance.addPostFrameCallback((_) {
+                if (mounted) setState(() => _expanded = 5);
+              });
+            }
           }
 
           // A step = its card plus, when expanded, a Continue button that

@@ -52,6 +52,7 @@ Convert options:
   --cover <path>                cover image (default: the EPUB's own)
   --chapters <a,b,c>            only these chapter indices (default: all)
   -o, --output <path>           output .m4b (default: <title>.m4b next to epub)
+  --keep-artifacts              keep the work dir (cached WAVs) after success
   --models-dir <dir>            models location (default: ~/.audiobook_studio/models)
   --sherpa-lib <dir>            dir with sherpa dylibs (default: auto-detect)
   --api-key <key>               cloud key (or OPENAI_API_KEY / ELEVENLABS_API_KEY)
@@ -147,6 +148,7 @@ void _schema() {
           {'name': '--cover', 'type': 'path', 'description': 'Cover image override (else the EPUB\'s own).'},
           {'name': '--chapters', 'type': 'string', 'description': 'Comma-separated chapter indices (default: all).'},
           {'name': '--output', 'aliases': ['-o'], 'type': 'path', 'description': 'Output .m4b (default: <title>.m4b next to the epub).'},
+          {'name': '--keep-artifacts', 'type': 'flag', 'description': 'Keep the work dir (cached WAVs) after success (default: delete).'},
           {'name': '--models-dir', 'type': 'path', 'description': 'Where models live (default: ~/.audiobook_studio/models).'},
           {'name': '--sherpa-lib', 'type': 'path', 'description': 'Dir with sherpa native libs (default: auto-detect from a flutter macOS build).'},
           {'name': '--api-key', 'type': 'string', 'description': 'Cloud key (else OPENAI_API_KEY / ELEVENLABS_API_KEY).'},
@@ -263,6 +265,7 @@ Future<void> _convert(_Args args) async {
     modelsDir: args.opt('models-dir'),
     sherpaLib: args.opt('sherpa-lib'),
     apiKey: args.opt('api-key'),
+    keepArtifacts: args.flag('keep-artifacts'),
   );
 }
 
@@ -282,6 +285,7 @@ Future<({String output, int chapters})> _runConvertJob({
   String? modelsDir,
   String? sherpaLib,
   String? apiKey,
+  bool keepArtifacts = false,
 }) async {
   if (!File(path).existsSync()) _fail('File not found: $path');
   final runner = SystemProcessRunner();
@@ -340,6 +344,7 @@ Future<({String output, int chapters})> _runConvertJob({
     workDir: '$out.work',
     coverOverridePath: cover,
     selectedChapterIndices: selected,
+    deleteArtifactsOnSuccess: !keepArtifacts,
     apiKeys: {if (engine.isCloud) engine.name: key},
   );
 
@@ -401,6 +406,14 @@ Future<int> _runConversion(
   await ffmpeg.assembleM4b(book, renderedChapters, renderedWavs, o,
       coverPath: coverPath, sampleRate: backend.sampleRate as int);
   await backend.dispose();
+  // On success only: optionally remove the cached WAVs/scratch files.
+  if (o.deleteArtifactsOnSuccess) {
+    try {
+      Directory(o.workDir).deleteSync(recursive: true);
+    } on FileSystemException {
+      // Non-fatal.
+    }
+  }
   if (_json) {
     _emit({'event': 'done', 'output': o.outputPath, 'chapters': renderedChapters.length});
   } else {
@@ -477,6 +490,7 @@ final _mcpTools = [
         'output': {'type': 'string', 'description': 'Output .m4b path.'},
         'models_dir': {'type': 'string', 'description': 'Optional models directory.'},
         'api_key': {'type': 'string', 'description': 'Cloud key (else OPENAI_API_KEY / ELEVENLABS_API_KEY).'},
+        'keep_artifacts': {'type': 'boolean', 'description': 'Keep the working files (cached chapter WAVs) after success (default false = delete).'},
       },
       'required': ['path'],
     },
@@ -586,6 +600,7 @@ Future<void> _mcpCall(Object? id, Map<String, dynamic>? params) async {
           output: args['output'] as String?,
           modelsDir: args['models_dir'] as String?,
           apiKey: args['api_key'] as String?,
+          keepArtifacts: args['keep_artifacts'] == true,
         );
         text = jsonEncode({'output': r.output, 'chapters': r.chapters});
       default:
@@ -713,7 +728,7 @@ class _CliError implements Exception {
 class _Args {
   /// Value-less switches: they must never consume the following token (so
   /// `info --json book.epub` keeps `book.epub` as a positional).
-  static const _knownFlags = {'json', 'help', 'h'};
+  static const _knownFlags = {'json', 'help', 'h', 'keep-artifacts'};
 
   final List<String> positionals = [];
   final Map<String, String> _opts = {};

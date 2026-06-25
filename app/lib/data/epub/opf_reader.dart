@@ -28,6 +28,11 @@ class OpfData {
   /// Archive path of the declared cover image, if the OPF identified one.
   final String? coverHref;
 
+  /// Map of spine archive path (fragment stripped) → its table-of-contents
+  /// title, from the EPUB3 nav document or EPUB2 NCX. Used to title chapters
+  /// that have no in-document heading.
+  final Map<String, String> tocTitles;
+
   const OpfData({
     required this.title,
     required this.author,
@@ -35,6 +40,7 @@ class OpfData {
     required this.spineHrefs,
     required this.mediaTypes,
     this.coverHref,
+    this.tocTitles = const {},
   });
 }
 
@@ -67,6 +73,8 @@ class OpfReader {
     final idToHref = <String, String>{};
     final mediaTypes = <String, String>{};
     String? coverIdHref;
+    String? navHref; // EPUB3 nav document
+    String? ncxHref; // EPUB2 NCX
     for (final item in pkg.findAllElements('item', namespaceUri: '*')) {
       final id = item.getAttribute('id');
       final href = item.getAttribute('href');
@@ -75,10 +83,11 @@ class OpfReader {
       final path = resolve(href);
       idToHref[id] = path;
       mediaTypes[path] = media;
+      final props = item.getAttribute('properties') ?? '';
       // EPUB3 cover marker.
-      if ((item.getAttribute('properties') ?? '').contains('cover-image')) {
-        coverIdHref = path;
-      }
+      if (props.contains('cover-image')) coverIdHref = path;
+      if (props.split(RegExp(r'\s+')).contains('nav')) navHref = path;
+      if (media == 'application/x-dtbncx+xml') ncxHref = path;
     }
 
     // EPUB2 cover marker: <meta name="cover" content="cover-id"/>.
@@ -108,7 +117,51 @@ class OpfReader {
       spineHrefs: spine,
       mediaTypes: mediaTypes,
       coverHref: coverIdHref,
+      tocTitles: _readToc(archive, navHref, ncxHref),
     );
+  }
+
+  /// Builds a map of spine archive path → table-of-contents title from the
+  /// EPUB3 nav document (preferred) or EPUB2 NCX. Fragments are stripped so the
+  /// first entry pointing into a file titles that whole spine document. Failures
+  /// are swallowed — the TOC is an enhancement, not required.
+  Map<String, String> _readToc(Archive archive, String? navHref, String? ncxHref) {
+    final out = <String, String>{};
+    final path = navHref ?? ncxHref;
+    if (path == null) return out;
+    try {
+      final dir = p.url.dirname(path);
+      final doc = XmlDocument.parse(_readString(archive, path));
+      String target(String href) =>
+          p.url.normalize(p.url.join(dir, href.split('#').first));
+      String clean(String s) => s.trim().replaceAll(RegExp(r'\s+'), ' ');
+
+      if (navHref != null) {
+        // EPUB3: <nav><ol><li><a href="file#frag">Title</a>…
+        for (final a in doc.findAllElements('a', namespaceUri: '*')) {
+          final href = a.getAttribute('href');
+          final text = clean(a.innerText);
+          if (href == null || text.isEmpty) continue;
+          out.putIfAbsent(target(href), () => text);
+        }
+      } else {
+        // EPUB2 NCX: <navPoint><navLabel><text>Title</text></navLabel>
+        //            <content src="file#frag"/></navPoint>
+        for (final np in doc.findAllElements('navPoint', namespaceUri: '*')) {
+          final text = clean(
+              np.findAllElements('text', namespaceUri: '*').firstOrNull?.innerText ?? '');
+          final src = np
+              .findAllElements('content', namespaceUri: '*')
+              .firstOrNull
+              ?.getAttribute('src');
+          if (text.isEmpty || src == null) continue;
+          out.putIfAbsent(target(src), () => text);
+        }
+      }
+    } on Object {
+      // Malformed TOC — ignore and fall back to in-document headings.
+    }
+    return out;
   }
 
   /// Finds the OPF path via `META-INF/container.xml`.

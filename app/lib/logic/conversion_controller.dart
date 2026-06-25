@@ -168,9 +168,26 @@ class ConversionController extends ChangeNotifier {
           coverPath: coverPath, sampleRate: backend.sampleRate);
       _setPhase(ConvPhase.done, message: 'Done → ${options.outputPath}');
       _log.info('Done → ${options.outputPath}');
+      // On success only: optionally remove the cached WAVs/scratch files. A
+      // failed run keeps them so the next attempt can resume.
+      if (options.deleteArtifactsOnSuccess) _cleanupWorkDir(options.workDir);
     } catch (e) {
       _log.error('Assembly failed: $e');
       _setPhase(ConvPhase.error, message: 'Assembly failed: $e');
+    }
+  }
+
+  /// Deletes the work directory (cached chapter WAVs + scratch files) after a
+  /// successful run. Best-effort: failure to remove it is logged, not fatal.
+  void _cleanupWorkDir(String workDir) {
+    try {
+      final dir = Directory(workDir);
+      if (dir.existsSync()) {
+        dir.deleteSync(recursive: true);
+        _log.info('Removed working files');
+      }
+    } on FileSystemException catch (e) {
+      _log.warn('Could not remove working files: $e');
     }
   }
 

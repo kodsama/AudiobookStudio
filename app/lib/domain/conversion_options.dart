@@ -62,6 +62,11 @@ class ConversionOptions {
   /// Directory where per-chapter WAVs are cached for resume.
   final String workDir;
 
+  /// Whether to delete [workDir] (the cached chapter WAVs and scratch files)
+  /// after a successful conversion. Default true; a failed run always keeps it
+  /// so the next attempt can resume.
+  final bool deleteArtifactsOnSuccess;
+
   /// API keys keyed by backend name (only used by cloud backends).
   final Map<String, String> apiKeys;
 
@@ -75,6 +80,7 @@ class ConversionOptions {
     required this.selectedChapterIndices,
     required this.workDir,
     this.coverOverridePath,
+    this.deleteArtifactsOnSuccess = true,
     this.apiKeys = const {},
   });
 
@@ -112,6 +118,7 @@ class ConversionOptions {
     String? coverOverridePath,
     Set<int>? selectedChapterIndices,
     String? workDir,
+    bool? deleteArtifactsOnSuccess,
     Map<String, String>? apiKeys,
   }) {
     return ConversionOptions(
@@ -125,6 +132,8 @@ class ConversionOptions {
       selectedChapterIndices:
           selectedChapterIndices ?? this.selectedChapterIndices,
       workDir: workDir ?? this.workDir,
+      deleteArtifactsOnSuccess:
+          deleteArtifactsOnSuccess ?? this.deleteArtifactsOnSuccess,
       apiKeys: apiKeys ?? this.apiKeys,
     );
   }

@@ -121,6 +121,23 @@ class AppController extends ChangeNotifier {
     return sherpaModelById(o.voiceId);
   }
 
+  /// Whether at least one offline (local) voice supports the book's language.
+  bool get hasLocalVoiceForLanguage {
+    final b = _book;
+    return b != null && sherpaModelsFor(b.languageCode).isNotEmpty;
+  }
+
+  /// A warning when the detected book language has no bundled offline voice —
+  /// the user must use a cloud engine (which covers many languages) instead.
+  /// Null when a local voice exists or no book is loaded.
+  String? get languageSupportWarning {
+    final b = _book;
+    if (b == null || hasLocalVoiceForLanguage) return null;
+    return 'No offline voice supports "${b.languageCode}". Pick a cloud engine '
+        '(OpenAI or ElevenLabs) and add its API key, or choose a language an '
+        'offline voice covers.';
+  }
+
   /// Parses [bytes] from [sourcePath], derives default options, and checks deps.
   Future<void> loadBook(Uint8List bytes, String sourcePath) async {
     _parseError = null;
@@ -141,6 +158,8 @@ class AppController extends ChangeNotifier {
       ).copyWith(backend: backend);
       log.info('Loaded "${book.title}" — ${book.chapters.length} chapters '
           '· engine: ${backend.label}');
+      final warning = languageSupportWarning;
+      if (warning != null) log.warn(warning);
       notifyListeners();
     } on Object catch (e) {
       _parseError = e.toString();

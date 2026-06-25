@@ -18,13 +18,11 @@ import 'logic/conversion_controller.dart';
 import 'logic/log_controller.dart';
 import 'logic/theme_controller.dart';
 import 'ui/home_screen.dart';
-import 'ui/licenses.dart';
 import 'ui/theme.dart';
 import 'util/platform_env.dart';
 
 Future<void> main() async {
   WidgetsFlutterBinding.ensureInitialized();
-  registerProjectLicenses();
   final support = await getApplicationSupportDirectory();
   final theme = await ThemeController.load(support.path);
   // On mobile, output goes to app-scoped storage and scratch to the temp dir.
